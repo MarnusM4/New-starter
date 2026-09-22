@@ -21,7 +21,7 @@ class IdentityPath(str, Enum):
 class ClientConfig(BaseModel):
     """Validated shape of one client's process definition."""
 
-    client_id: str = Field(..., description="Stable id; matches the file name and HALO mapping")
+    client_id: str = Field(..., description="Stable id; matches the file name and Zoho Desk mapping")
     identity_path: IdentityPath
 
     # Entra path

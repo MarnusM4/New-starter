@@ -30,29 +30,29 @@ LOOKUP_PATH = CLIENTS_DIR / "_lookup.yaml"
 
 
 class UnknownClientError(Exception):
-    """The HALO client on the ticket isn't mapped to any config file."""
+    """The Zoho Desk client on the ticket isn't mapped to any config file."""
 
 
 def load_lookup() -> dict[str, str]:
-    """HALO client id -> config file stem. See clients/_lookup.yaml."""
+    """Zoho Desk client id -> config file stem. See clients/_lookup.yaml."""
     if not LOOKUP_PATH.exists():
         return {}
     data = yaml.safe_load(LOOKUP_PATH.read_text(encoding="utf-8")) or {}
-    # Normalise keys to str so numeric HALO ids match whether quoted or not.
+    # Normalise keys to str so numeric Desk ids match whether quoted or not.
     return {str(k): str(v) for k, v in data.items()}
 
 
-def resolve_config(halo_client_id: str) -> ClientConfig:
-    """Map a HALO client id to its validated config, via the lookup table.
+def resolve_config(desk_client_id: str) -> ClientConfig:
+    """Map a Zoho Desk client id to its validated config, via the lookup table.
 
     Raises UnknownClientError if the client isn't mapped — the caller should flag the
     ticket for a human rather than guess.
     """
     lookup = load_lookup()
-    stem = lookup.get(str(halo_client_id))
+    stem = lookup.get(str(desk_client_id))
     if stem is None:
         raise UnknownClientError(
-            f"HALO client '{halo_client_id}' is not mapped in clients/_lookup.yaml"
+            f"Zoho Desk client '{desk_client_id}' is not mapped in clients/_lookup.yaml"
         )
     return load_client(stem)
 

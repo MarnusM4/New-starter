@@ -5,7 +5,7 @@ Working notes for Claude / contributors on this repository.
 ## What this project is
 
 An agent that automates **starter/leaver** account provisioning for MSP clients, triggered
-by **HALO** tickets. For the full picture, read these two files first — they are the source
+by **Zoho Desk** tickets. For the full picture, read these two files first — they are the source
 of truth and should be kept in sync with any change:
 
 - **[README.md](README.md)** — architecture, identity paths, APIs & permissions, security,

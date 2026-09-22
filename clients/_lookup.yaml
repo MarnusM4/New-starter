@@ -1,12 +1,13 @@
-# HALO client id -> config file stem (clients/<stem>.yaml).
+# Zoho Desk client id -> config file stem (clients/<stem>.yaml).
 #
-# The agent reads the client off the HALO ticket, then maps it here to the right config
-# file. Using HALO's numeric client id (not the name) keeps the mapping stable when a
-# client is renamed in HALO. Fill in real entries once you have HALO client ids.
+# The agent reads the client off the Zoho Desk ticket (its accountId / departmentId), then
+# maps it here to the right config file. Using a stable Desk id (not the display name) keeps
+# the mapping stable when a client is renamed in Desk. Fill in real entries once you have
+# the Desk account/department ids.
 #
 # Example (real):
-#   "142": acme
-#   "317": globex
+#   "1892000000042001": acme
+#   "1892000000317005": globex
 #
 # These two map the example configs to themselves so dev_run / tests resolve:
 example-entra: example-entra

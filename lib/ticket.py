@@ -1,6 +1,6 @@
 """Normalised representation of a starter/leaver ticket.
 
-The raw HALO payload is messy and client-specific. We parse it once into this typed
+The raw Zoho Desk payload is messy and client-specific. We parse it once into this typed
 model and ONLY use these validated fields downstream. Raw ticket text is treated as
 untrusted data, never as instructions (prompt-injection defence).
 """
@@ -53,8 +53,8 @@ class TicketType(str, Enum):
 class StarterDetails(BaseModel):
     """The new-user fields we read from the ticket's user-info table.
 
-    Field names are placeholders — map them to the real HALO custom-field ids in
-    `lib/halo.py:parse_ticket` once API access is available.
+    Field names are placeholders — map them to the real Zoho Desk custom-field API names
+    in `lib/zoho.py:parse_ticket` once API access is available.
     """
 
     first_name: str

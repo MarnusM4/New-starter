@@ -1,6 +1,6 @@
 """Retry with exponential backoff for transient HTTP failures.
 
-HALO, Graph and ARM all return 429 (throttling) and occasional 5xx under load. Wrap the
+Zoho Desk, Graph and ARM all return 429 (throttling) and occasional 5xx under load. Wrap the
 network call in `with_retries` so transient errors are retried (honouring Retry-After)
 and permanent ones (4xx other than 429) fail fast.
 """

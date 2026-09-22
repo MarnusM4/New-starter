@@ -1,4 +1,4 @@
-"""Local dry-run of the Phase A core without HALO/Azure access.
+"""Local dry-run of the Phase A core without Zoho Desk/Azure access.
 
 Feeds a canned ticket through the orchestrator so you can see the provisioning plan and
 audit log. No network calls, no writes.
@@ -11,7 +11,7 @@ from __future__ import annotations
 from lib.ticket import StarterDetails, Ticket, TicketType
 
 
-class CannedHalo:
+class CannedDesk:
     def __init__(self, raw):
         self._raw = raw
         self.notes = []
@@ -51,7 +51,7 @@ def main() -> None:
             "manager_email": "boss@example.com",
         },
     }
-    process_ticket("T-DEV-1", halo=CannedHalo(raw), state=InMemoryState())
+    process_ticket("T-DEV-1", desk=CannedDesk(raw), state=InMemoryState())
 
 
 if __name__ == "__main__":
