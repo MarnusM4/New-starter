@@ -16,11 +16,14 @@ removing repetitive manual provisioning while staying **safe and auditable**.
 ## How it works
 
 ```
-Zoho Desk ticket (type=Starter)
+Zoho Form (client onboarding) ──emails ${zf:ALL_FIELDS} summary──► helpdesk mailbox
+   │                                                                     │
+   ▼                                                          becomes a Zoho Desk ticket
+Zoho Desk ticket (Starter)
    │  Zoho Desk workflow → webhook → token-verified Azure Function front door
    ▼
-Orchestrator / Agent  ── reads ticket + user-info table (Zoho Desk API)
-   │                  ── resolves client → loads clients/<client>.yaml
+Orchestrator / Agent  ── reads the form summary from the ticket body (Zoho Desk API)
+   │                  ── resolves client (from "Company's Name") → loads clients/<client>.yaml
    │                  ── validates ticket data (treat as untrusted)
    │                  ── HUMAN APPROVAL GATE (privileged action)
    ▼
@@ -31,6 +34,16 @@ Constrained action layer (holds the privileged credentials)
    ▼
 Write result back to Zoho Desk ticket (note + status)  +  append to audit log
 ```
+
+### Intake — Zoho Forms → email summary → Zoho Desk ticket
+
+Onboarding requests originate from a **Zoho Form** (one per client). On submit, Zoho Forms
+emails a `${zf:ALL_FIELDS}` **form summary** — a clean `Label : Value` block — to the
+helpdesk mailbox, which becomes a **Zoho Desk ticket**. The starter details therefore live in
+the ticket **body/description**, not in structured custom fields. The agent parses that
+labelled block ([lib/zoho.py](lib/zoho.py) `parse_summary` + `DEFAULT_FIELD_LABELS`), treating
+the body as **untrusted** — only whitelisted labels are read. A digital PDF of the form is
+also attached, but the email summary is the source of truth (no PDF parsing / OCR).
 
 ### Trigger — Zoho Desk webhook
 
@@ -73,19 +86,24 @@ role_group_map:             # optional: map ticket "role" field → extra groups
   Sales: [CRM-Users, Sales-Shared]
 usage_location: GB
 approval_required: true
+field_labels:               # optional: override intake form labels for this client
+  job_title: "Position"     # only override labels that differ from the Flawless defaults
 ```
 
 For the `local_ad` path the file also carries `automation_account`, `hybrid_worker_group`,
 `subscription_id`, `resource_group`, `runbook_name`, and `ou_path`.
 
-`clients/_schema.py` defines the shape so a malformed client file fails fast.
+`clients/_schema.py` defines the shape so a malformed client file fails fast. The optional
+`field_labels` map overrides [lib/zoho.py](lib/zoho.py) `DEFAULT_FIELD_LABELS` per client, for
+clients whose form uses different label wording; absent, the defaults apply.
 
-### Mapping a Zoho Desk client to its config
+### Mapping a client to its config
 
-The agent reads the client off the Zoho Desk ticket, then maps it to a config file via the
-lookup table `clients/_lookup.yaml` (Zoho Desk client id → config file stem). Using Zoho Desk's
-numeric client id keeps the mapping stable when a client is renamed. A ticket from an
-**unmapped** client is flagged for a human (note + needs-attention status) — never guessed.
+Because every client's onboarding form emails the **same** helpdesk mailbox, the ticket has no
+per-client Desk account id. Instead the agent reads the form's **"Company's Name"** value and
+maps it to a config file via the lookup table `clients/_lookup.yaml` (company name → config
+file stem, matched case-insensitively). A ticket from an **unmapped** company is flagged for a
+human (note + needs-attention status) — never guessed.
 
 ---
 
@@ -93,7 +111,7 @@ numeric client id keeps the mapping stable when a client is renamed. A ticket fr
 
 | System | Use | Auth / permissions |
 |---|---|---|
-| **Zoho Desk API** | Read ticket + custom fields, post comment, update status | OAuth2 refresh-token grant; one scoped Zoho Desk self-client application |
+| **Zoho Desk API** | Read ticket body (form summary), post comment, update status | OAuth2 refresh-token grant; one scoped Zoho Desk self-client application |
 | **Microsoft Graph** | Entra path: create user, `assignLicense`, group add | App registration **per client tenant** (or multi-tenant, consented per tenant); least-privilege app permissions, e.g. `User.ReadWrite.All`, `Group.ReadWrite.All`, `Organization.Read.All` |
 | **Azure Automation** | Local-AD path: trigger runbook on Hybrid Worker | Azure REST API; runbook + Hybrid Runbook Worker per local-AD client |
 | **On-prem AD** | `New-ADUser`, group membership (via runbook) | PowerShell `ActiveDirectory` module on the Hybrid Worker; credentials scoped per client |

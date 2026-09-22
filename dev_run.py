@@ -8,24 +8,19 @@ audit log. No network calls, no writes.
 
 from __future__ import annotations
 
-from lib.ticket import StarterDetails, Ticket, TicketType
+from lib.zoho import ZohoDeskClient
 
 
-class CannedDesk:
+class CannedDesk(ZohoDeskClient):
+    """Uses the REAL parse_ticket against a canned email-summary body; stubs the network."""
+
     def __init__(self, raw):
+        super().__init__()
         self._raw = raw
         self.notes = []
 
     def get_ticket_raw(self, ticket_id):
         return self._raw
-
-    def parse_ticket(self, raw):
-        return Ticket(
-            ticket_id=raw["id"],
-            client_id=raw["client_ref"],
-            ticket_type=TicketType(raw["type"]),
-            starter=StarterDetails(**raw["user_info"]),
-        )
 
     def post_note(self, ticket_id, note):
         self.notes.append((ticket_id, note))
@@ -35,22 +30,23 @@ class CannedDesk:
         print(f"--- STATUS ticket {ticket_id} -> {status} ---")
 
 
+# A canned Zoho Forms ${zf:ALL_FIELDS} summary (the client maps to the example config).
+DEV_SUMMARY = """
+Company's Name : example-entra
+New Starter's Name : Ms., Ada, Lovelace
+New Starter's NS Email Address : ada.lovelace@acme.com
+Job Title : Account Manager
+Department : Sales
+Country : United Kingdom
+Start Date : 01-Oct-2026
+"""
+
+
 def main() -> None:
     from agent.orchestrator import process_ticket
     from lib.state import InMemoryState
 
-    raw = {
-        "id": "T-DEV-1",
-        "client_ref": "example-entra",
-        "type": "starter",
-        "user_info": {
-            "first_name": "Ada",
-            "last_name": "Lovelace",
-            "job_title": "Account Manager",
-            "role": "Sales",
-            "manager_email": "boss@example.com",
-        },
-    }
+    raw = {"id": "T-DEV-1", "subject": "New Starter Onboarding", "description": DEV_SUMMARY}
     process_ticket("T-DEV-1", desk=CannedDesk(raw), state=InMemoryState())
 
 

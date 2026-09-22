@@ -49,7 +49,12 @@ def resolve_config(desk_client_id: str) -> ClientConfig:
     ticket for a human rather than guess.
     """
     lookup = load_lookup()
-    stem = lookup.get(str(desk_client_id))
+    key = str(desk_client_id)
+    stem = lookup.get(key)
+    if stem is None:
+        # Company names typed on a form vary in case/whitespace — match case-insensitively.
+        ci = {k.strip().lower(): v for k, v in lookup.items()}
+        stem = ci.get(key.strip().lower())
     if stem is None:
         raise UnknownClientError(
             f"Zoho Desk client '{desk_client_id}' is not mapped in clients/_lookup.yaml"

@@ -4,8 +4,12 @@ Working notes for Claude / contributors on this repository.
 
 ## What this project is
 
-An agent that automates **starter/leaver** account provisioning for MSP clients, triggered
-by **Zoho Desk** tickets. For the full picture, read these two files first — they are the source
+An agent that automates **starter/leaver** account provisioning for MSP clients. Requests
+originate from **Zoho Forms** (one onboarding form per client); Zoho Forms emails a
+`${zf:ALL_FIELDS}` summary to the helpdesk mailbox, which becomes a **Zoho Desk** ticket. The
+agent parses the `Label : Value` summary out of the ticket body (`lib/zoho.py`
+`parse_summary`), resolves the client from the "Company's Name" value, and drives the
+provisioning core. For the full picture, read these two files first — they are the source
 of truth and should be kept in sync with any change:
 
 - **[README.md](README.md)** — architecture, identity paths, APIs & permissions, security,

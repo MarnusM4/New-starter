@@ -1,13 +1,13 @@
-# Zoho Desk client id -> config file stem (clients/<stem>.yaml).
+# Client identifier -> config file stem (clients/<stem>.yaml).
 #
-# The agent reads the client off the Zoho Desk ticket (its accountId / departmentId), then
-# maps it here to the right config file. Using a stable Desk id (not the display name) keeps
-# the mapping stable when a client is renamed in Desk. Fill in real entries once you have
-# the Desk account/department ids.
+# Onboarding requests arrive as Zoho Forms emails to the shared helpdesk mailbox, so the
+# ticket doesn't carry a per-client Desk account id. Instead the agent reads the form's
+# "Company's Name" value and maps it here to the right config file. Keys are matched
+# case-insensitively (see lib/config.load_lookup). Fill in real entries per client.
 #
-# Example (real):
-#   "1892000000042001": acme
-#   "1892000000317005": globex
+# Example (real — the "Company's Name" answer on each client's form):
+#   "Portland Quarry": portland
+#   "Natural Selection": natural-selection
 #
 # These two map the example configs to themselves so dev_run / tests resolve:
 example-entra: example-entra

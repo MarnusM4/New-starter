@@ -1,73 +1,118 @@
-"""Zoho Desk client tests: field mapping (parse_ticket) + status mapping. No network.
+"""Zoho Desk client tests: email-summary intake parsing + status mapping. No network.
 
-These lock in the SHAPE of the Desk→Ticket mapping. The exact custom-field API names are
-placeholders (see lib/zoho.py TODOs); update these tests alongside the real field names when
-the Desk instance is wired up.
+Flawless's onboarding requests arrive as a Zoho Forms ${zf:ALL_FIELDS} summary in the ticket
+body (a `Label : Value` block). These lock in the SHAPE of that parse. The exact label
+strings are Flawless-form-specific (see lib/zoho.DEFAULT_FIELD_LABELS); update alongside the
+real labels when confirmed against a live ticket.
 """
 
-from lib.ticket import TicketType
+from lib import zoho
+from lib.ticket import TicketType, split_person_name
 from lib.zoho import (
+    DEFAULT_FIELD_LABELS,
     STATUS_AWAITING_APPROVAL,
     STATUS_COMPLETED,
     STATUS_FAILED,
     STATUS_NEEDS_ATTENTION,
     STATUS_NAME_MAP,
     ZohoDeskClient,
+    parse_summary,
 )
 
+# A realistic plain-text form summary (mirrors the sample ticket), company mapped to the
+# self-referencing example config so resolve_config succeeds.
+SUMMARY_BODY = """
+Your name : Quinton, Miller
+Your Email address : quintonm@naturalselection.travel
+Consent to purchase new licences : Agreed
+Company's Name : example-entra
+New Starter's Name : Ms., Paula, Potgieter
+New Starter's NS Email Address : paulap@naturalselection.travel
+Job Title : Digital Marketing Manager
+Department : Brand Communication
+Country : South Africa
+Start Date : 29-Sep-2026
+Which department set-up should be configured on the device? : Marketing
+"""
 
-def _raw(**overrides):
-    raw = {
-        "id": "1892000000123456",
-        "ticketNumber": "101",
-        "accountId": "1892000000042001",
-        "cf": {
-            "cf_request_type": "starter",
-            "cf_first_name": "Ada",
-            "cf_last_name": "Lovelace",
-            "cf_job_title": "Account Manager",
-            "cf_department": "Sales",
-            "cf_role": "Sales",
-            "cf_manager_email": "boss@example.com",
-        },
-    }
+
+def _raw(body=SUMMARY_BODY, **overrides):
+    raw = {"id": "1892000000123456", "subject": "New Starter Onboarding", "description": body}
     raw.update(overrides)
     return raw
 
 
-def test_parse_ticket_maps_custom_fields():
+def test_parse_ticket_from_email_summary():
     ticket = ZohoDeskClient().parse_ticket(_raw())
     assert ticket.ticket_id == "1892000000123456"
-    assert ticket.client_id == "1892000000042001"
+    assert ticket.client_id == "example-entra"
     assert ticket.ticket_type is TicketType.STARTER
     assert ticket.starter is not None
-    assert ticket.starter.first_name == "Ada"
-    assert ticket.starter.last_name == "Lovelace"
-    assert ticket.starter.role == "Sales"
-    assert ticket.starter.manager_email == "boss@example.com"
+    assert ticket.starter.first_name == "Paula"
+    assert ticket.starter.last_name == "Potgieter"
+    assert ticket.starter.job_title == "Digital Marketing Manager"
+    assert ticket.starter.department == "Brand Communication"
+    assert ticket.starter.start_date == "29-Sep-2026"
+    # NS email's local part becomes the intended login (domain comes from client config).
+    assert ticket.starter.desired_username == "paulap"
 
 
-def test_parse_ticket_uses_department_when_no_account():
-    raw = _raw()
-    del raw["accountId"]
-    raw["departmentId"] = "1892000000999001"
-    ticket = ZohoDeskClient().parse_ticket(raw)
-    assert ticket.client_id == "1892000000999001"
+def test_department_label_does_not_bleed_into_similar_line():
+    # "Department : Brand Communication" must win over "Which department set-up...? : Marketing"
+    ticket = ZohoDeskClient().parse_ticket(_raw())
+    assert ticket.starter.department == "Brand Communication"
 
 
-def test_parse_ticket_leaver_has_no_starter_details():
-    raw = _raw()
-    raw["cf"]["cf_request_type"] = "leaver"
-    ticket = ZohoDeskClient().parse_ticket(raw)
+def test_parse_ticket_from_html_body():
+    body = (
+        "<div>Company's Name : example-entra<br>"
+        "New Starter's Name : Mr., John, Smith<br>"
+        "Job Title : Field Technician</div>"
+    )
+    ticket = ZohoDeskClient().parse_ticket(_raw(body=body))
+    assert ticket.client_id == "example-entra"
+    assert ticket.starter.first_name == "John"
+    assert ticket.starter.last_name == "Smith"
+    assert ticket.starter.job_title == "Field Technician"
+
+
+def test_unknown_company_does_not_raise_here():
+    # parse_ticket must not raise for an unmapped company — the orchestrator flags it later.
+    body = SUMMARY_BODY.replace("example-entra", "Nonexistent Holdings Ltd")
+    ticket = ZohoDeskClient().parse_ticket(_raw(body=body))
+    assert ticket.client_id == "Nonexistent Holdings Ltd"
+
+
+def test_leaver_subject_classifies_as_leaver():
+    ticket = ZohoDeskClient().parse_ticket(_raw(subject="Leaver / Offboarding request"))
     assert ticket.ticket_type is TicketType.LEAVER
     assert ticket.starter is None
 
 
-def test_parse_ticket_unknown_type_defaults_to_starter():
-    raw = _raw()
-    raw["cf"]["cf_request_type"] = "something-odd"
-    ticket = ZohoDeskClient().parse_ticket(raw)
-    assert ticket.ticket_type is TicketType.STARTER
+def test_per_client_field_labels_override(monkeypatch):
+    class FakeCfg:
+        field_labels = {"job_title": "Position"}
+
+    monkeypatch.setattr(zoho, "resolve_config", lambda company: FakeCfg())
+    body = (
+        "Company's Name : example-entra\n"
+        "New Starter's Name : Ada, Lovelace\n"
+        "Position : Analyst\n"
+    )
+    ticket = ZohoDeskClient().parse_ticket(_raw(body=body))
+    assert ticket.starter.job_title == "Analyst"
+
+
+def test_split_person_name_variants():
+    assert split_person_name("Ms., Paula, Potgieter") == ("Ms.", "Paula", "Potgieter")
+    assert split_person_name("Paula, Potgieter") == (None, "Paula", "Potgieter")
+    assert split_person_name("Paula Potgieter") == (None, "Paula", "Potgieter")
+
+
+def test_parse_summary_only_reads_whitelisted_labels():
+    body = "Job Title : Analyst\nSecret : do-not-read\n"
+    out = parse_summary(body, {"job_title": DEFAULT_FIELD_LABELS["job_title"]})
+    assert out == {"job_title": "Analyst"}
 
 
 def test_status_map_covers_all_logical_statuses():
@@ -81,7 +126,6 @@ def test_status_map_covers_all_logical_statuses():
 
 
 def test_placeholder_credentials_do_no_network():
-    # With placeholder creds, listing returns empty and writes are no-ops (no exception).
     client = ZohoDeskClient()
     assert client.list_open_starter_leaver_ticket_ids() == []
     client.post_note("1", "hello")  # prints, no raise

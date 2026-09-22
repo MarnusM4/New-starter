@@ -24,14 +24,17 @@ call the regional `desk.zoho.*` API with `Authorization: Zoho-oauthtoken <token>
 
 from __future__ import annotations
 
+import html
 import os
+import re
 import time
 from typing import Any
 
 import requests
 
+from .config import UnknownClientError, resolve_config
 from .retry import with_retries
-from .ticket import StarterDetails, Ticket, TicketType
+from .ticket import StarterDetails, Ticket, TicketType, split_person_name
 
 
 class ZohoDeskClient:
@@ -137,36 +140,40 @@ class ZohoDeskClient:
     def parse_ticket(self, raw: dict[str, Any]) -> Ticket:
         """Map the raw Zoho Desk payload to our normalised Ticket.
 
-        PLACEHOLDER MAPPING: replace the keys below with the real Desk custom-field API
-        names for your instance. Desk custom fields arrive under `cf` keyed by their API
-        name (e.g. `cf_first_name`). Only these validated fields are used downstream — raw
-        text is never executed as instructions.
+        Flawless's onboarding requests come from Zoho Forms: the form emails a
+        `${zf:ALL_FIELDS}` summary (a `Label : Value` block) to the helpdesk mailbox, which
+        becomes a Desk ticket. So the starter details live in the ticket **description/body**,
+        not in structured custom fields. We extract the labelled values (untrusted — only
+        whitelisted labels are read, nothing is executed as instructions), resolve the client
+        from the "Company's Name" value, and build a validated StarterDetails.
         """
-        cf = raw.get("cf", {}) or {}
+        body = self._ticket_body(raw)
 
-        # TODO: real classifier. Desk has no built-in starter/leaver type — expect a custom
-        # field (e.g. cf_request_type) or the ticket `classification`/`category`.
-        raw_type = str(
-            cf.get("cf_request_type") or raw.get("classification") or "starter"
-        ).lower()
-        ticket_type = TicketType(raw_type) if raw_type in TicketType._value2member_map_ else TicketType.STARTER
+        # The client's form label overrides are keyed off the company name, which itself uses
+        # a fixed default label — resolve it defensively (unknown company must NOT raise here;
+        # the orchestrator flags unknown clients after parse via resolve_config).
+        company = _extract_one(body, DEFAULT_FIELD_LABELS["company"]) or ""
+        labels = _field_labels_for(company)
+        fields = parse_summary(body, labels)
 
-        # TODO: real client mapping key. Prefer a stable id (accountId / departmentId) over
-        # a display name so the lookup survives a client rename.
-        client_id = str(raw.get("accountId") or raw.get("departmentId") or "example-entra")
+        client_id = fields.get("company") or company or "example-entra"
+        ticket_type = _classify_ticket(raw, fields)
 
         starter = None
         if ticket_type is TicketType.STARTER:
+            _prefix, first, last = split_person_name(fields.get("new_starter_name", ""))
             starter = StarterDetails(
-                first_name=cf.get("cf_first_name", ""),
-                last_name=cf.get("cf_last_name", ""),
-                display_name=cf.get("cf_display_name"),
-                job_title=cf.get("cf_job_title"),
-                department=cf.get("cf_department"),
-                role=cf.get("cf_role"),
-                manager_email=cf.get("cf_manager_email"),
-                desired_username=cf.get("cf_desired_username"),
-                start_date=cf.get("cf_start_date"),
+                first_name=first,
+                last_name=last,
+                job_title=fields.get("job_title"),
+                department=fields.get("department"),
+                role=fields.get("role"),
+                manager_email=fields.get("manager_email"),
+                # The requested NS email's local part is the intended login/username; the
+                # domain comes from the client's upn_suffix config. Full username is still
+                # validated against the allow-list downstream (build_username).
+                desired_username=_email_local_part(fields.get("ns_email")),
+                start_date=fields.get("start_date"),
             )
 
         return Ticket(
@@ -175,6 +182,16 @@ class ZohoDeskClient:
             ticket_type=ticket_type,
             starter=starter,
         )
+
+    @staticmethod
+    def _ticket_body(raw: dict[str, Any]) -> str:
+        """The text we parse the form summary out of.
+
+        Desk's `description` holds the first message. TODO: confirm on a real ticket whether
+        the full summary is there or in the latest thread; if needed, fetch
+        GET /api/v1/tickets/{id}/latestThread and use its `content`.
+        """
+        return str(raw.get("description") or raw.get("content") or "")
 
     # ------------------------------------------------------------------ writes
     def post_note(self, ticket_id: str, note: str) -> None:
@@ -219,6 +236,103 @@ class ZohoDeskClient:
             ).raise_for_status()
 
         with_retries(call)
+
+
+# --------------------------------------------------------------------------- intake parsing
+#
+# Canonical starter field -> the Flawless form's label text in the ${zf:ALL_FIELDS} summary.
+# A client whose form uses different labels overrides these via `field_labels:` in
+# clients/<client>.yaml (merged over these defaults). TODO: confirm the exact label strings
+# (incl. the manager field, not visible in the sample) against a live ticket.
+DEFAULT_FIELD_LABELS: dict[str, str] = {
+    "company": "Company's Name",
+    "new_starter_name": "New Starter's Name",
+    "ns_email": "New Starter's NS Email Address",
+    "job_title": "Job Title",
+    "department": "Department",
+    "country": "Country",
+    "start_date": "Start Date",
+    "manager_email": "Manager's Email",  # TODO: confirm real label
+}
+
+
+def _html_to_text(s: str) -> str:
+    """Best-effort HTML → text so a `Label : Value` block survives on one line per field.
+
+    Desk may store the email body as HTML. Turn row/line boundaries into newlines and cell
+    boundaries into a ' : ' separator, drop remaining tags, unescape entities, and collapse
+    any doubled separators. Plain-text bodies pass through unchanged.
+    """
+    if "<" in s and ">" in s:
+        s = re.sub(r"(?i)<br\s*/?>", "\n", s)
+        s = re.sub(r"(?i)</(tr|p|div|li|h[1-6])\s*>", "\n", s)
+        s = re.sub(r"(?i)</td>\s*<td[^>]*>", " : ", s)
+        s = re.sub(r"<[^>]+>", "", s)
+    s = html.unescape(s)
+    s = re.sub(r"[ \t]*:[ \t]*:[ \t]*", " : ", s)  # collapse a doubled colon from cell joins
+    return s
+
+
+def _extract_one(body: str, label: str) -> str | None:
+    """Pull a single `Label : Value` off its own line (case-insensitive). None if absent."""
+    flat = _html_to_text(body)
+    m = re.search(
+        rf"^[ \t]*{re.escape(label)}[ \t]*:[ \t]*(.*\S)[ \t]*$",
+        flat,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    return m.group(1).strip() if m else None
+
+
+def parse_summary(body: str, labels: dict[str, str]) -> dict[str, str]:
+    """Extract the whitelisted labelled values from the form-summary body.
+
+    Only the given labels are read; any other content in the (untrusted) body is ignored.
+    Returns a dict keyed by canonical field name.
+    """
+    out: dict[str, str] = {}
+    for canon, label in labels.items():
+        val = _extract_one(body, label)
+        if val:
+            out[canon] = val
+    return out
+
+
+def _field_labels_for(company: str) -> dict[str, str]:
+    """DEFAULT_FIELD_LABELS merged with a client's `field_labels` override, if resolvable.
+
+    Defensive: an unknown/unresolvable company falls back to the defaults so parse_ticket
+    never raises here — the orchestrator flags unknown clients after parsing.
+    """
+    labels = dict(DEFAULT_FIELD_LABELS)
+    if not company:
+        return labels
+    try:
+        cfg = resolve_config(company)
+    except UnknownClientError:
+        return labels
+    labels.update(cfg.field_labels or {})
+    return labels
+
+
+def _email_local_part(value: str | None) -> str | None:
+    """Return the part before '@' of a requested NS email (the intended login), else None.
+
+    e.g. "paulap@naturalselection.travel" -> "paulap". A bare value with no '@' is returned
+    as-is; empty/None -> None. The result is still validated against the username allow-list
+    downstream, so this only normalises the source, it does not trust it.
+    """
+    if not value:
+        return None
+    return value.split("@", 1)[0].strip() or None
+
+
+def _classify_ticket(raw: dict[str, Any], fields: dict[str, str]) -> TicketType:
+    """Starter vs leaver. Onboarding forms are starters; TODO: confirm the leaver signal."""
+    subject = str(raw.get("subject", "")).lower()
+    if "leaver" in subject or "offboard" in subject:
+        return TicketType.LEAVER
+    return TicketType.STARTER
 
 
 # Logical status names used by the orchestrator. TODO: replace values with the real Zoho

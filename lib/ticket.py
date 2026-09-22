@@ -32,6 +32,31 @@ def normalize_username(raw: str) -> str:
     return raw.strip().lower().replace(" ", "")
 
 
+def split_person_name(value: str) -> tuple[str | None, str, str]:
+    """Split a Zoho "Name" field summary value into (prefix, first, last).
+
+    Zoho Forms renders a Name field into the ${zf:ALL_FIELDS} summary as its subfields in
+    order, comma-separated — e.g. "Ms., Paula, Potgieter" (Prefix, First, Last) or
+    "Paula, Potgieter" (First, Last) when no prefix is set. We only need first/last
+    downstream; the prefix is returned for completeness.
+
+    Untrusted input: this only splits/trims text — it never validates the username. The
+    resulting first/last still flow through validate_username at the trust boundary.
+    """
+    parts = [p.strip() for p in value.split(",") if p.strip()]
+    if len(parts) >= 3:
+        return parts[0], parts[1], parts[-1]
+    if len(parts) == 2:
+        return None, parts[0], parts[1]
+    if len(parts) == 1:
+        # A single token (e.g. "Paula Potgieter" with a space, or just a first name).
+        tokens = parts[0].split()
+        if len(tokens) >= 2:
+            return None, tokens[0], tokens[-1]
+        return None, parts[0], ""
+    return None, "", ""
+
+
 def validate_username(name: str) -> str:
     """Return `name` if it satisfies the username policy, else raise InvalidTicketData.
 

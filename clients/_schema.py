@@ -56,6 +56,16 @@ class ClientConfig(BaseModel):
         description="Username template. Tokens: {first} {last} {first_initial} {last_initial}",
     )
 
+    # Intake mapping (Zoho Forms email-summary parsing)
+    field_labels: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-client overrides mapping a canonical starter field "
+            "(e.g. 'new_starter_name', 'job_title') to THIS client's form label text. "
+            "Merged over lib.zoho.DEFAULT_FIELD_LABELS; absent -> defaults apply."
+        ),
+    )
+
     # Safety
     approval_required: bool = True
 

@@ -17,4 +17,12 @@ usage_location: GB
 upn_suffix: acme.com            # UPN/email domain; omit to use the tenant default
 username_format: "{first}.{last}"  # tokens: {first} {last} {first_initial} {last_initial}
 
+# Optional: override the intake form labels for THIS client, if their Zoho Form uses
+# different wording than the Flawless defaults (lib/zoho.DEFAULT_FIELD_LABELS). Only the
+# canonical fields you list here are overridden; the rest fall back to the defaults.
+# field_labels:
+#   new_starter_name: "New Employee Full Name"
+#   job_title: "Position"
+#   start_date: "First Day"
+
 approval_required: true
