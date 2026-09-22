@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Starter / Leaver Agent — Demo</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a2230;
+    --panel-2: #222c3d;
+    --border: #2d3a4f;
+    --text: #e6edf3;
+    --muted: #8b9bb0;
+    --accent: #3b82f6;
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --purple: #a855f7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.45;
+  }
+  header {
+    padding: 20px 28px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(180deg, #131a25, #0f1419);
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 4px 10px; border-radius: 999px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 28px 60px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 22px; }
+  .tab {
+    padding: 9px 18px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 550;
+    background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+  }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
+  @media (max-width: 880px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px;
+  }
+  .card h2 { font-size: 14px; margin: 0 0 16px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
+  input, select {
+    width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel-2); color: var(--text); font-size: 14px;
+  }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  button.run {
+    margin-top: 18px; width: 100%; padding: 12px; border: none; border-radius: 9px;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button.run:disabled { opacity: .5; cursor: default; }
+  button.run.leaver { background: var(--red); }
+  .stat-bar { display: flex; gap: 14px; margin-bottom: 18px; }
+  .stat {
+    flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+  }
+  .stat .n { font-size: 26px; font-weight: 700; }
+  .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
+  .stat .n.green { color: var(--green); }
+  .stat .n.blue { color: var(--accent); }
+  .log {
+    background: #0b0f15; border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px;
+    font-family: "SF Mono", Consolas, monospace; font-size: 13px; min-height: 300px; max-height: 440px; overflow-y: auto;
+  }
+  .log .line { display: flex; gap: 10px; padding: 5px 0; opacity: 0; transform: translateY(4px); animation: in .25s forwards; }
+  @keyframes in { to { opacity: 1; transform: none; } }
+  .log .icon { width: 16px; flex: none; }
+  .log .t { color: var(--muted); flex: none; }
+  .ok { color: var(--green); }
+  .info { color: var(--accent); }
+  .warn { color: var(--amber); }
+  .done-banner {
+    margin-top: 14px; padding: 14px 18px; border-radius: 10px; background: rgba(34,197,94,.12);
+    border: 1px solid rgba(34,197,94,.4); font-size: 14px; display: none;
+  }
+  .done-banner.leaver { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.4); }
+  .done-banner b { color: var(--green); }
+  .done-banner.leaver b { color: var(--red); }
+  .dir { margin-top: 20px; }
+  .user-row {
+    display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 9px; margin-bottom: 8px; background: var(--panel-2); font-size: 13px;
+  }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 650; font-size: 13px; flex: none; }
+  .user-row .meta { flex: 1; }
+  .user-row .meta .name { font-weight: 600; }
+  .user-row .meta .role { color: var(--muted); font-size: 12px; }
+  .pill { font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 600; }
+  .pill.active { background: rgba(34,197,94,.15); color: var(--green); }
+  .pill.disabled { background: rgba(239,68,68,.15); color: var(--red); }
+  .pill.provisioning { background: rgba(245,158,11,.15); color: var(--amber); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Starter / Leaver Agent</h1>
+    <div class="sub">Automated identity onboarding &amp; offboarding — live simulation</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:14px">
+    <label style="margin:0;display:flex;align-items:center;gap:7px;font-size:12px">Pace
+      <select id="pace" style="width:auto;padding:5px 8px">
+        <option value="650">Presentation (paced)</option>
+        <option value="120">Fast</option>
+        <option value="0">Instant</option>
+      </select>
+    </label>
+    <div class="badge">DEMO · mock tenant · no live data</div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="tabs">
+    <div class="tab active" data-tab="starter" onclick="switchTab('starter')">➕ New Starter</div>
+    <div class="tab" data-tab="leaver" onclick="switchTab('leaver')">➖ Leaver</div>
+  </div>
+
+  <div class="stat-bar">
+    <div class="stat"><div class="n blue" id="stat-steps">0</div><div class="l">Steps automated</div></div>
+    <div class="stat"><div class="n green" id="stat-time">—</div><div class="l">Agent time</div></div>
+    <div class="stat"><div class="n" id="stat-manual">2h 45m</div><div class="l">Typical manual time</div></div>
+  </div>
+
+  <div class="grid">
+    <!-- STARTER FORM -->
+    <div class="card" id="panel-starter">
+      <h2>New starter details</h2>
+      <label>Full name</label>
+      <input id="s-name" value="Aisha Khan">
+      <div class="row">
+        <div><label>Department</label>
+          <select id="s-dept">
+            <option>Finance</option><option>Sales</option><option selected>Engineering</option>
+            <option>HR</option><option>Marketing</option><option>Operations</option>
+          </select>
+        </div>
+        <div><label>Job title</label><input id="s-title" value="Software Engineer"></div>
+      </div>
+      <div class="row">
+        <div><label>Manager</label>
+          <select id="s-mgr">
+            <option>James Whitfield</option><option selected>Priya Sharma</option><option>Tom Bauer</option>
+          </select>
+        </div>
+        <div><label>Start date</label><input id="s-date" type="date"></div>
+      </div>
+      <label>Client organisation</label>
+      <select id="s-client">
+        <option>Hartley &amp; Co (Entra-only)</option>
+        <option>Meridian Logistics (Hybrid AD)</option>
+        <option>Castle Care Group (Entra-only)</option>
+      </select>
+      <button class="run" id="s-btn" onclick="runStarter()">Run onboarding ▶</button>
+      <div class="hint">The agent reads the HR request, then provisions everything the new joiner needs before day one.</div>
+    </div>
+
+    <!-- LEAVER FORM -->
+    <div class="card" id="panel-leaver" style="display:none">
+      <h2>Leaver details</h2>
+      <label>Select employee</label>
+      <select id="l-user"></select>
+      <label>Last working day</label>
+      <input id="l-date" type="date">
+      <label>Reassign mailbox &amp; files to</label>
+      <select id="l-mgr">
+        <option>Priya Sharma (Manager)</option><option>James Whitfield (Manager)</option><option>IT Shared Mailbox</option>
+      </select>
+      <label>Offboarding type</label>
+      <select id="l-type">
+        <option>Standard (graceful)</option><option>Immediate / security event</option>
+      </select>
+      <button class="run leaver" id="l-btn" onclick="runLeaver()">Run offboarding ▶</button>
+      <div class="hint">Access is revoked, data is preserved and handed over, and the licence is reclaimed automatically.</div>
+    </div>
+
+    <!-- ACTIVITY + DIRECTORY -->
+    <div>
+      <div class="card">
+        <h2>Agent activity</h2>
+        <div class="log" id="log"><div style="color:var(--muted)">Submit a request to watch the agent work…</div></div>
+        <div class="done-banner" id="banner"></div>
+      </div>
+      <div class="card dir">
+        <h2>Mock directory — live state</h2>
+        <div id="directory"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- Mock directory data ----
+let directory = [
+  { name: "Priya Sharma",    role: "Engineering Manager", status: "active" },
+  { name: "Tom Bauer",       role: "Sales Lead",          status: "active" },
+  { name: "Daniel O'Connor",  role: "Accountant",          status: "active" },
+  { name: "Sofia Romano",    role: "Marketing Exec",      status: "active" },
+];
+
+function initials(n){ return n.split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
+
+function renderDir(){
+  const el = document.getElementById('directory');
+  el.innerHTML = directory.map(u => `
+    <div class="user-row">
+      <div class="avatar">${initials(u.name)}</div>
+      <div class="meta"><div class="name">${u.name}</div><div class="role">${u.role}</div></div>
+      <span class="pill ${u.status}">${u.status[0].toUpperCase()+u.status.slice(1)}</span>
+    </div>`).join('');
+}
+
+function refreshLeaverDropdown(){
+  const sel = document.getElementById('l-user');
+  sel.innerHTML = directory.filter(u=>u.status==='active')
+    .map(u=>`<option>${u.name} — ${u.role}</option>`).join('');
+}
+
+function switchTab(t){
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x.dataset.tab===t));
+  document.getElementById('panel-starter').style.display = t==='starter' ? '' : 'none';
+  document.getElementById('panel-leaver').style.display  = t==='leaver'  ? '' : 'none';
+}
+
+function now(){ return new Date().toLocaleTimeString('en-GB',{hour12:false}); }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+function clearLog(){ document.getElementById('log').innerHTML=''; document.getElementById('banner').style.display='none'; }
+function logLine(cls, icon, text){
+  const log = document.getElementById('log');
+  const div = document.createElement('div');
+  div.className = 'line';
+  div.innerHTML = `<span class="t">${now()}</span><span class="icon ${cls}">${icon}</span><span>${text}</span>`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+let stepCount = 0;
+function bumpSteps(){ document.getElementById('stat-steps').textContent = ++stepCount; }
+
+function pace(){ return parseInt(document.getElementById('pace').value,10); }
+async function runSteps(steps){
+  for (const s of steps){
+    await sleep(pace());
+    logLine(s.cls||'ok', s.icon||'✓', s.text);
+    bumpSteps();
+    if (s.after) s.after();
+  }
+}
+
+// ---- STARTER FLOW ----
+async function runStarter(){
+  const name = document.getElementById('s-name').value.trim() || 'New Starter';
+  const dept = document.getElementById('s-dept').value;
+  const title = document.getElementById('s-title').value;
+  const client = document.getElementById('s-client').value;
+  const hybrid = client.includes('Hybrid');
+  const first = name.split(' ')[0].toLowerCase();
+  const last  = (name.split(' ')[1]||'').toLowerCase();
+  const upn = `${first}.${last}@${client.split(' ')[0].toLowerCase()}.com`;
+
+  document.getElementById('s-btn').disabled = true;
+  stepCount = 0; document.getElementById('stat-steps').textContent = 0;
+  document.getElementById('stat-time').textContent = '…';
+  clearLog();
+  const t0 = Date.now();
+
+  logLine('info','▸',`HR request received: onboard <b>${name}</b> (${title}, ${dept}) at <b>${client}</b>`);
+  await sleep(500);
+
+  // add as provisioning
+  directory.unshift({ name, role: title, status: 'provisioning' });
+  renderDir();
+
+  const steps = [
+    {text:`Validated request against ${dept} role template`},
+    {cls:'info',icon:'▸',text:hybrid?`Creating account in on-prem AD via Hybrid Runbook Worker…`:`Creating account in Entra ID…`},
+    {text:`Account created — UPN <b>${upn}</b>, temp password issued`},
+    {text:`Assigned Microsoft 365 E3 licence (mailbox + Teams + OneDrive)`},
+    {text:`Added to security groups: All-Staff, ${dept}-Team, VPN-Users`},
+    {text:`Added to distribution lists & ${dept} Teams channels`},
+    {text:`Mailbox provisioned, signature applied from brand template`},
+    {text:`Manager set to ${document.getElementById('s-mgr').value}; org chart updated`},
+    {cls:'info',icon:'✉',text:`Welcome email + IT setup guide sent to manager`},
+    {text:`Activated account`, after:()=>{ directory[0].status='active'; renderDir(); }},
+    {cls:'info',icon:'🛈',text:`Full audit trail written to central log (Conosco tenant)`},
+  ];
+  await runSteps(steps);
+
+  const secs = ((Date.now()-t0)/1000).toFixed(1);
+  document.getElementById('stat-time').textContent = secs+'s';
+  const b = document.getElementById('banner');
+  b.className='done-banner'; b.style.display='block';
+  b.innerHTML = `<b>✓ ${name} is ready for day one.</b> ${stepCount} steps completed in ${secs}s — vs ~2h 45m doing it manually. Account, licence, access, mailbox and manager all set.`;
+  refreshLeaverDropdown();
+  document.getElementById('s-btn').disabled = false;
+}
+
+// ---- LEAVER FLOW ----
+async function runLeaver(){
+  const sel = document.getElementById('l-user').value;
+  const name = sel.split(' — ')[0];
+  const immediate = document.getElementById('l-type').value.includes('Immediate');
+  const handover = document.getElementById('l-mgr').value;
+
+  document.getElementById('l-btn').disabled = true;
+  stepCount = 0; document.getElementById('stat-steps').textContent = 0;
+  document.getElementById('stat-time').textContent='…';
+  clearLog();
+  const t0 = Date.now();
+
+  logLine('info','▸',`Leaver request received: offboard <b>${name}</b> (${immediate?'immediate / security event':'standard'})`);
+  await sleep(500);
+
+  const u = directory.find(x=>x.name===name);
+
+  const steps = [
+    {cls:'warn',icon:'⏻',text:`Sign-in disabled${immediate?' immediately':''}`, after:()=>{ if(u){u.status='disabled'; renderDir();} }},
+    {cls:'warn',icon:'⏻',text:`Revoked all active sessions & refresh tokens`},
+    {text:`Reset password & removed from VPN-Users, All-Staff`},
+    {text:`Removed from all security & distribution groups`},
+    {cls:'info',icon:'✉',text:`Mailbox converted to shared, delegated to ${handover}`},
+    {text:`OneDrive / files ownership transferred to ${handover}`},
+    {text:`Mobile devices wiped & unenrolled from Intune`},
+    {text:`Microsoft 365 licence reclaimed → returned to pool (cost saved)`},
+    {cls:'info',icon:'🛈',text:`Manager notified; offboarding checklist closed`},
+    {cls:'info',icon:'🛈',text:`Full audit trail written to central log (Conosco tenant)`},
+  ];
+  await runSteps(steps);
+
+  const secs = ((Date.now()-t0)/1000).toFixed(1);
+  document.getElementById('stat-time').textContent = secs+'s';
+  const b = document.getElementById('banner');
+  b.className='done-banner leaver'; b.style.display='block';
+  b.innerHTML = `<b>✓ ${name} fully offboarded.</b> Access revoked in ${secs}s, data preserved and handed to ${handover}, licence reclaimed. Zero lingering access — the gap attackers exploit is closed instantly.`;
+  document.getElementById('l-btn').disabled = false;
+}
+
+// ---- init ----
+document.getElementById('s-date').valueAsDate = new Date(Date.now()+7*864e5);
+document.getElementById('l-date').valueAsDate = new Date(Date.now()+14*864e5);
+renderDir();
+refreshLeaverDropdown();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Core runtime deps for the Starter/Leaver agent.
+# Pinned to known-good ranges; tighten to exact versions when you lock the deployment.
+
+azure-functions~=1.21      # Azure Functions Python worker
+requests~=2.32             # HALO + Graph + ARM REST calls
+PyYAML~=6.0                # per-client config files
+pydantic~=2.9              # config + ticket schema validation
+python-dotenv~=1.0         # local dev: load .env (never commit real secrets)
+
+# Azure integrations (Entra path, Key Vault, durable state)
+azure-identity~=1.19       # Entra app auth for Graph / Azure REST / Key Vault
+azure-keyvault-secrets~=4.9
+azure-data-tables~=12.5    # AzureTableState (durable idempotency in prod)
+
+# Test
+pytest~=8.3

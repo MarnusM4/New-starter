@@ -1,0 +1,20 @@
+# Secrets - never commit
+.env
+*.env
+!.env.example
+audit.log
+state.json
+local.settings.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Azure Functions
+bin/
+obj/
+.python_packages/

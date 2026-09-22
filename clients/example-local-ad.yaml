@@ -1,0 +1,24 @@
+# Example client: on-prem Active Directory (synced to Entra via AD Connect).
+# The new user is created on-prem by a PowerShell runbook running on this client's
+# Hybrid Runbook Worker; AD Connect then syncs the account up to Entra.
+client_id: example-local-ad
+identity_path: local_ad
+
+# Azure Automation account + Hybrid Worker group that can reach this client's DC.
+automation_account: PLACEHOLDER-AUTOMATION-ACCOUNT
+hybrid_worker_group: PLACEHOLDER-HYBRID-WORKER-GROUP
+subscription_id: PLACEHOLDER-SUBSCRIPTION-GUID
+resource_group: PLACEHOLDER-RESOURCE-GROUP
+runbook_name: Create-AdUser
+ou_path: "OU=Staff,DC=client,DC=local"
+
+# Licensing/groups are still applied in Entra after sync (Phase B).
+license_skus:
+  - O365_BUSINESS_PREMIUM
+default_groups:
+  - All-Staff
+role_group_map:
+  Sales: [CRM-Users]
+usage_location: GB
+
+approval_required: true

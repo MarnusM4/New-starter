@@ -1,0 +1,20 @@
+# Example client: Azure/Entra-only.
+# Copy this to `<client-id>.yaml` and edit per real client.
+client_id: example-entra
+identity_path: entra
+
+tenant_id: PLACEHOLDER-TENANT-GUID
+
+license_skus:
+  - O365_BUSINESS_PREMIUM
+default_groups:
+  - All-Staff
+  - VPN-Users
+role_group_map:
+  Sales: [CRM-Users, Sales-Shared]
+  Support: [Helpdesk-Agents]
+usage_location: GB
+upn_suffix: acme.com            # UPN/email domain; omit to use the tenant default
+username_format: "{first}.{last}"  # tokens: {first} {last} {first_initial} {last_initial}
+
+approval_required: true
