@@ -32,7 +32,7 @@ from typing import Any
 
 import requests
 
-from .config import UnknownClientError, resolve_config
+from .config import ClientConfig, UnknownClientError, identify_client, resolve_config
 from .retry import with_retries
 from .ticket import StarterDetails, Ticket, TicketType, split_person_name
 
@@ -144,20 +144,31 @@ class ZohoDeskClient:
         `${zf:ALL_FIELDS}` summary (a `Label : Value` block) to the helpdesk mailbox, which
         becomes a Desk ticket. So the starter details live in the ticket **description/body**,
         not in structured custom fields. We extract the labelled values (untrusted — only
-        whitelisted labels are read, nothing is executed as instructions), resolve the client
-        from the "Company's Name" value, and build a validated StarterDetails.
+        whitelisted labels are read, nothing is executed as instructions), work out the
+        client from the company name and/or email domains, and build a validated
+        StarterDetails.
+
+        Never raises for an unidentified client: client_id is set to a readable marker and
+        the orchestrator flags it via resolve_config -> UnknownClientError.
         """
         body = self._ticket_body(raw)
 
-        # The client's form label overrides are keyed off the company name, which itself uses
-        # a fixed default label — resolve it defensively (unknown company must NOT raise here;
-        # the orchestrator flags unknown clients after parse via resolve_config).
-        company = _extract_one(body, DEFAULT_FIELD_LABELS["company"]) or ""
-        labels = _field_labels_for(company)
+        # Forms differ per client, so identify the client from label-independent clues first,
+        # then read that client's label overrides and subject keywords.
+        company = _extract_company(body)
+        config: ClientConfig | None = None
+        try:
+            client_id = identify_client(company, body)
+            config = resolve_config(client_id)
+        except UnknownClientError as exc:
+            client_id = _unidentified_marker(company, body, exc)
+
+        labels = dict(DEFAULT_FIELD_LABELS)
+        if config is not None:
+            labels.update(config.field_labels or {})
         fields = parse_summary(body, labels)
 
-        client_id = fields.get("company") or company or "example-entra"
-        ticket_type = _classify_ticket(raw, fields)
+        ticket_type = classify_subject(str(raw.get("subject", "")), config)
 
         starter = None
         if ticket_type is TicketType.STARTER:
@@ -298,21 +309,26 @@ def parse_summary(body: str, labels: dict[str, str]) -> dict[str, str]:
     return out
 
 
-def _field_labels_for(company: str) -> dict[str, str]:
-    """DEFAULT_FIELD_LABELS merged with a client's `field_labels` override, if resolvable.
+# Forms word the company question differently; this is only one clue among several.
+COMPANY_LABELS: tuple[str, ...] = ("Company's Name", "Company Name", "Company")
 
-    Defensive: an unknown/unresolvable company falls back to the defaults so parse_ticket
-    never raises here — the orchestrator flags unknown clients after parsing.
-    """
-    labels = dict(DEFAULT_FIELD_LABELS)
-    if not company:
-        return labels
-    try:
-        cfg = resolve_config(company)
-    except UnknownClientError:
-        return labels
-    labels.update(cfg.field_labels or {})
-    return labels
+
+def _extract_company(body: str) -> str | None:
+    for label in COMPANY_LABELS:
+        value = _extract_one(body, label)
+        if value:
+            return value
+    return None
+
+
+def _unidentified_marker(company: str | None, body: str, exc: Exception) -> str:
+    """A readable client_id for a ticket we couldn't place (shown in the technician note)."""
+    from .config import AmbiguousClientError, email_domains_in
+
+    kind = "ambiguous" if isinstance(exc, AmbiguousClientError) else "unidentified"
+    domains = ", ".join(email_domains_in(body)[:5]) or "none"
+    comp = (company or "none")[:60]
+    return f"{kind}: company='{comp}', email domains={domains}"
 
 
 def _email_local_part(value: str | None) -> str | None:
@@ -327,12 +343,41 @@ def _email_local_part(value: str | None) -> str | None:
     return value.split("@", 1)[0].strip() or None
 
 
-def _classify_ticket(raw: dict[str, Any], fields: dict[str, str]) -> TicketType:
-    """Starter vs leaver. Onboarding forms are starters; TODO: confirm the leaver signal."""
-    subject = str(raw.get("subject", "")).lower()
-    if "leaver" in subject or "offboard" in subject:
+# Form titles vary per client ("Onboarding", "New Starter IT Form", "New User", ...). A client
+# with other wording adds it via starter_subject_keywords / leaver_subject_keywords.
+DEFAULT_STARTER_KEYWORDS: tuple[str, ...] = (
+    "onboarding", "on-boarding", "new starter", "new user", "new employee", "new hire", "joiner",
+)
+DEFAULT_LEAVER_KEYWORDS: tuple[str, ...] = (
+    "offboarding", "off-boarding", "leaver", "exit", "termination", "departure",
+)
+
+
+def _mentions(subject: str, keyword: str) -> bool:
+    """Whole-word/phrase, case-insensitive; spaces in a keyword also match '-' or runs of space."""
+    parts = [re.escape(p) for p in keyword.lower().split()]
+    pattern = r"[\s-]+".join(parts)
+    return re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", subject.lower()) is not None
+
+
+def classify_subject(subject: str, config: ClientConfig | None = None) -> TicketType:
+    """STARTER / LEAVER when the subject clearly says so; UNKNOWN when neither or both match.
+
+    UNKNOWN is flagged for a technician — an unclear ticket never creates an account.
+    """
+    starter_kw = list(DEFAULT_STARTER_KEYWORDS)
+    leaver_kw = list(DEFAULT_LEAVER_KEYWORDS)
+    if config is not None:
+        starter_kw += list(config.starter_subject_keywords or [])
+        leaver_kw += list(config.leaver_subject_keywords or [])
+
+    is_starter = any(_mentions(subject, k) for k in starter_kw)
+    is_leaver = any(_mentions(subject, k) for k in leaver_kw)
+    if is_starter and not is_leaver:
+        return TicketType.STARTER
+    if is_leaver and not is_starter:
         return TicketType.LEAVER
-    return TicketType.STARTER
+    return TicketType.UNKNOWN
 
 
 # Logical status names used by the orchestrator. TODO: replace values with the real Zoho

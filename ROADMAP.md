@@ -59,9 +59,11 @@ unapproved run does nothing; malformed/malicious ticket fields are rejected, not
 > (placeholder ids). Every orchestrator outcome now writes back a note **and** a status —
 > awaiting approval, completed, failed, or needs-attention (unknown client). Provisioning
 > is wrapped so failures post a note, set FAILED, audit the error, and re-raise. Each run
-> gets a correlation `run_id` threaded through its audit events. Client resolution uses the
-> `clients/_lookup.yaml` table (Zoho Desk client id → config); unmapped clients are flagged for
-> a human, never guessed.
+> gets a correlation `run_id` threaded through its audit events. The client is identified
+> from the form summary's email domains (auto-discovered from each client's Microsoft tenant)
+> and/or its "Company's Name" answer (`clients/_lookup.yaml` aliases); unidentified or
+> ambiguous clients are flagged for a human, never guessed. Starter vs leaver comes from the
+> subject keywords; an unclear subject is flagged too.
 
 **Done when:** every run produces a complete, accurate audit record and a clear ticket
 write-back. _(Status-id values are placeholders until the real Zoho Desk instance is wired up.)_
@@ -143,8 +145,10 @@ real tenants:
 4. **Lock down the approval signal in Zoho Desk** — confirm the real "approved/approved_by"
    fields and restrict who can set them; `is_approved` / `approver` currently use
    placeholder fields.
-5. **Real Zoho Desk field mappings + status names** — `parse_ticket`, `_lookup.yaml`, and
-   `STATUS_ID_MAP` still hold placeholders.
+5. **Real Zoho Desk field labels + status names** — confirm each client form's labels
+   (`DEFAULT_FIELD_LABELS` / per-client `field_labels`), any subject wording outside the
+   default keywords, and the Desk status names in `STATUS_NAME_MAP` (still placeholders).
+   Grant `Domain.Read.All` in each client tenant so client domains are discovered.
 6. **Wire `NOTIFY_WEBHOOK_URL`** to the real ops channel and test delivery.
 7. **Local-AD post-sync licensing** — after AD Connect sync, apply Entra licensing/cloud
    groups for `local_ad` clients (currently noted as pending-sync only).

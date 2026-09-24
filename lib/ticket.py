@@ -73,6 +73,9 @@ def validate_username(name: str) -> str:
 class TicketType(str, Enum):
     STARTER = "starter"
     LEAVER = "leaver"
+    # Subject didn't clearly say starter or leaver (neither or both matched) -> a human
+    # decides; nothing is provisioned on a guess.
+    UNKNOWN = "unknown"
 
 
 class StarterDetails(BaseModel):

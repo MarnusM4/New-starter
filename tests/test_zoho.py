@@ -6,7 +6,10 @@ strings are Flawless-form-specific (see lib/zoho.DEFAULT_FIELD_LABELS); update a
 real labels when confirmed against a live ticket.
 """
 
+import pytest
+
 from lib import zoho
+from lib.config import UnknownClientError, load_client, resolve_config
 from lib.ticket import TicketType, split_person_name
 from lib.zoho import (
     DEFAULT_FIELD_LABELS,
@@ -77,10 +80,13 @@ def test_parse_ticket_from_html_body():
 
 
 def test_unknown_company_does_not_raise_here():
-    # parse_ticket must not raise for an unmapped company — the orchestrator flags it later.
+    # parse_ticket must not raise for an unidentified client — the orchestrator flags it later.
     body = SUMMARY_BODY.replace("example-entra", "Nonexistent Holdings Ltd")
     ticket = ZohoDeskClient().parse_ticket(_raw(body=body))
-    assert ticket.client_id == "Nonexistent Holdings Ltd"
+    assert ticket.client_id.startswith("unidentified:")
+    assert "Nonexistent Holdings Ltd" in ticket.client_id
+    with pytest.raises(UnknownClientError):
+        resolve_config(ticket.client_id)
 
 
 def test_leaver_subject_classifies_as_leaver():
@@ -90,10 +96,8 @@ def test_leaver_subject_classifies_as_leaver():
 
 
 def test_per_client_field_labels_override(monkeypatch):
-    class FakeCfg:
-        field_labels = {"job_title": "Position"}
-
-    monkeypatch.setattr(zoho, "resolve_config", lambda company: FakeCfg())
+    cfg = load_client("example-entra").model_copy(update={"field_labels": {"job_title": "Position"}})
+    monkeypatch.setattr(zoho, "resolve_config", lambda key: cfg)
     body = (
         "Company's Name : example-entra\n"
         "New Starter's Name : Ada, Lovelace\n"

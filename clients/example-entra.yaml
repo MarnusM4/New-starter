@@ -25,4 +25,14 @@ username_format: "{first}.{last}"  # tokens: {first} {last} {first_initial} {las
 #   job_title: "Position"
 #   start_date: "First Day"
 
+# Optional, normally NOT needed: this client's email domains are read automatically from its
+# Microsoft tenant (verified domains). Only list a domain here if it isn't verified there.
+# email_domains:
+#   - legacy-brand.com
+
+# Optional: extra subject wording for this client's forms, on top of the defaults
+# (onboarding / new starter / new user ... and offboarding / leaver / exit ...).
+# starter_subject_keywords: ["it request"]
+# leaver_subject_keywords: ["staff departure form"]
+
 approval_required: true

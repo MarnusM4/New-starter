@@ -30,11 +30,14 @@ class CannedDesk(ZohoDeskClient):
         print(f"--- STATUS ticket {ticket_id} -> {status} ---")
 
 
-# A canned Zoho Forms ${zf:ALL_FIELDS} summary (the client maps to the example config).
+# A canned Zoho Forms ${zf:ALL_FIELDS} summary. Like some real client forms it has NO
+# "Company's Name" field — the client is identified from the email domains alone.
 DEV_SUMMARY = """
-Company's Name : example-entra
+Please review the new onboarding request and forward any changes to helpdesk@flawlessit.co.za
+Your name : Quinton, Miller
+Your Email address : quinton@acme.com
 New Starter's Name : Ms., Ada, Lovelace
-New Starter's NS Email Address : ada.lovelace@acme.com
+New Starter's NS Email Address : ada.lovelace@acme.co.za
 Job Title : Account Manager
 Department : Sales
 Country : United Kingdom
@@ -44,9 +47,14 @@ Start Date : 01-Oct-2026
 
 def main() -> None:
     from agent.orchestrator import process_ticket
+    from lib.config import set_domain_fetcher
     from lib.state import InMemoryState
 
-    raw = {"id": "T-DEV-1", "subject": "New Starter Onboarding", "description": DEV_SUMMARY}
+    # Simulate Graph GET /domains: the example client's tenant owns two verified domains.
+    set_domain_fetcher(
+        lambda cfg: ["acme.com", "acme.co.za"] if cfg.client_id == "example-entra" else []
+    )
+    raw = {"id": "T-DEV-1", "subject": "New Starter IT Form", "description": DEV_SUMMARY}
     process_ticket("T-DEV-1", desk=CannedDesk(raw), state=InMemoryState())
 
 

@@ -71,7 +71,7 @@ def test_unknown_client_flags_for_human(monkeypatch):
     plan = process_ticket("T-1001", desk=fake, state=InMemoryState())
     assert plan is None
     assert fake.statuses == ["needs_attention"]
-    assert "No automation config" in fake.notes[0][1]
+    assert "Couldn't match this request" in fake.notes[0][1]
 
 
 def test_approved_ticket_writes_completed_status(monkeypatch):
@@ -143,3 +143,15 @@ def test_missing_required_fields_flags_for_human(monkeypatch):
     plan = process_ticket("T-1001", desk=fake, state=InMemoryState())
     assert plan is None
     assert fake.statuses == ["needs_attention"]
+
+
+def test_unclear_ticket_type_flags_for_human(monkeypatch):
+    """A subject that isn't clearly starter or leaver must never provision on a guess."""
+    called = {"provision": 0}
+    monkeypatch.setattr(orchestrator, "provision", lambda *a, **k: called.__setitem__("provision", 1))
+    fake = FakeDesk(_raw(type="unknown", status="approved"))
+    plan = process_ticket("T-1001", desk=fake, state=InMemoryState())
+    assert plan is None
+    assert called["provision"] == 0
+    assert fake.statuses == ["needs_attention"]
+    assert "starter or a leaver" in fake.notes[0][1]

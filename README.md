@@ -23,7 +23,8 @@ Zoho Desk ticket (Starter)
    │  Zoho Desk workflow → webhook → token-verified Azure Function front door
    ▼
 Orchestrator / Agent  ── reads the form summary from the ticket body (Zoho Desk API)
-   │                  ── resolves client (from "Company's Name") → loads clients/<client>.yaml
+   │                  ── identifies client (email domains / company name) → loads clients/<client>.yaml
+   │                  ── classifies starter / leaver from the subject (unclear → technician)
    │                  ── validates ticket data (treat as untrusted)
    │                  ── HUMAN APPROVAL GATE (privileged action)
    ▼
@@ -99,11 +100,37 @@ clients whose form uses different label wording; absent, the defaults apply.
 
 ### Mapping a client to its config
 
-Because every client's onboarding form emails the **same** helpdesk mailbox, the ticket has no
-per-client Desk account id. Instead the agent reads the form's **"Company's Name"** value and
-maps it to a config file via the lookup table `clients/_lookup.yaml` (company name → config
-file stem, matched case-insensitively). A ticket from an **unmapped** company is flagged for a
-human (note + needs-attention status) — never guessed.
+Every client's onboarding form emails the **same** helpdesk mailbox, and each client's form
+asks different questions, so the ticket doesn't say which client it's for. The agent combines
+clues from the form summary (`lib/config.py` `identify_client`):
+
+- **Email domains** — every email address in the summary (requester, new starter, ...),
+  regardless of which question it answers. Each client's domains are **discovered
+  automatically** from its Microsoft tenant (verified domains via Graph `GET /domains`, cached
+  for 6h), so a client with several domains needs nothing listed, and a newly added domain is
+  picked up on the next refresh. Domains owned by no client (e.g. Flawless's own helpdesk
+  address in the email text) are ignored.
+- **Company's Name** — when a client's form has that question, mapped via the optional
+  aliases in `clients/_lookup.yaml` (case-insensitive).
+
+The clues must all point at **one** client. No match, or clues pointing at different clients
+(including a domain that shows up in two tenants), flags the ticket for a human (note +
+needs-attention status) — never guessed. Text typed on a form is never used as a file path:
+only known config file names are accepted.
+
+**Onboarding a new client** is creating their `clients/<client>.yaml` (tenant, identity path,
+licences, groups) — needed anyway to provision — and granting `Domain.Read.All` in their
+tenant. Domain matching then works with no further setup. Optional `email_domains:` in the
+client file covers a domain that isn't verified in the tenant.
+
+### Starter vs leaver
+
+Form titles vary per client ("Onboarding", "New Starter IT Form", "New User", ...), so the
+ticket **subject** is matched against keyword lists (`lib/zoho.py` `classify_subject`):
+starter — onboarding, new starter, new user, new employee, new hire, joiner; leaver —
+offboarding, leaver, exit, termination, departure. A client with other wording adds
+`starter_subject_keywords` / `leaver_subject_keywords` to its file. A subject that matches
+**neither or both** is flagged for a technician; it never creates an account.
 
 ---
 
@@ -112,7 +139,7 @@ human (note + needs-attention status) — never guessed.
 | System | Use | Auth / permissions |
 |---|---|---|
 | **Zoho Desk API** | Read ticket body (form summary), post comment, update status | OAuth2 refresh-token grant; one scoped Zoho Desk self-client application |
-| **Microsoft Graph** | Entra path: create user, `assignLicense`, group add | App registration **per client tenant** (or multi-tenant, consented per tenant); least-privilege app permissions, e.g. `User.ReadWrite.All`, `Group.ReadWrite.All`, `Organization.Read.All` |
+| **Microsoft Graph** | Entra path: create user, `assignLicense`, group add | App registration **per client tenant** (or multi-tenant, consented per tenant); least-privilege app permissions, e.g. `User.ReadWrite.All`, `Group.ReadWrite.All`, `Organization.Read.All`, `Domain.Read.All` (client identification) |
 | **Azure Automation** | Local-AD path: trigger runbook on Hybrid Worker | Azure REST API; runbook + Hybrid Runbook Worker per local-AD client |
 | **On-prem AD** | `New-ADUser`, group membership (via runbook) | PowerShell `ActiveDirectory` module on the Hybrid Worker; credentials scoped per client |
 

@@ -1,13 +1,15 @@
-# Client identifier -> config file stem (clients/<stem>.yaml).
+# OPTIONAL company-name aliases -> config file stem (clients/<stem>.yaml).
 #
 # Onboarding requests arrive as Zoho Forms emails to the shared helpdesk mailbox, so the
-# ticket doesn't carry a per-client Desk account id. Instead the agent reads the form's
-# "Company's Name" value and maps it here to the right config file. Keys are matched
-# case-insensitively (see lib/config.load_lookup). Fill in real entries per client.
+# agent works out the client from clues in the form summary:
+#   1. the email domains in it — matched automatically against each client's Microsoft
+#      tenant (verified domains), so nothing needs listing here for that;
+#   2. the "Company's Name" answer, when a client's form has one — mapped via this file.
+# The clues must all point at one client; otherwise the ticket is flagged for a technician.
+# Keys are matched case-insensitively.
 #
-# Example (real — the "Company's Name" answer on each client's form):
+# Example (real — the "Company's Name" answer on a client's form):
 #   "Portland Quarry": portland
-#   "Natural Selection": natural-selection
 #
 # These two map the example configs to themselves so dev_run / tests resolve:
 example-entra: example-entra

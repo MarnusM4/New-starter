@@ -153,6 +153,18 @@ def process_ticket(
     audit("ticket.parsed", ticket_id, run_id=run_id,
           client_id=ticket.client_id, type=ticket.ticket_type.value)
 
+    if ticket.ticket_type is TicketType.UNKNOWN:
+        # The subject didn't clearly say starter or leaver — never provision on a guess.
+        audit("ticket.type_unknown", ticket_id, run_id=run_id)
+        desk.post_note(
+            ticket_id,
+            "⚠️ Couldn't tell from the subject whether this is a starter or a leaver request. "
+            "No action taken.",
+        )
+        desk.update_status(ticket_id, STATUS_NEEDS_ATTENTION)
+        notify(f"Ticket {ticket_id}: starter/leaver type unclear from subject — needs attention.")
+        return None
+
     if ticket.ticket_type is not TicketType.STARTER:
         # Leaver handling arrives in Phase E.
         audit("ticket.skipped_non_starter", ticket_id, run_id=run_id, type=ticket.ticket_type.value)
@@ -163,18 +175,20 @@ def process_ticket(
         audit("ticket.already_provisioned", ticket_id, run_id=run_id)
         return None
 
-    # Resolve the Zoho Desk client to a config via the lookup table. Unknown -> flag a human.
+    # Resolve the identified client to its config. Unidentified/ambiguous -> flag a human.
     try:
         config = resolve_config(ticket.client_id)
-    except UnknownClientError as exc:
+    except UnknownClientError:
         audit("client.unknown", ticket_id, run_id=run_id, desk_client=ticket.client_id)
         desk.post_note(
             ticket_id,
-            f"⚠️ No automation config for Zoho Desk client '{ticket.client_id}'. "
-            "Add it to clients/_lookup.yaml. No action taken.",
+            f"⚠️ Couldn't match this request to a set-up client ({ticket.client_id}). "
+            "Check the client has a config file in clients/ (its email domains are read from "
+            "its Microsoft tenant), or add a company-name alias to clients/_lookup.yaml. "
+            "No action taken.",
         )
         desk.update_status(ticket_id, STATUS_NEEDS_ATTENTION)
-        notify(f"Ticket {ticket_id}: unknown Zoho Desk client '{ticket.client_id}' — needs config.")
+        notify(f"Ticket {ticket_id}: client not identified ({ticket.client_id}) — needs attention.")
         return None
 
     # Build the plan — this validates ticket-derived inputs (e.g. the username) against

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class IdentityPath(str, Enum):
@@ -65,6 +65,24 @@ class ClientConfig(BaseModel):
             "Merged over lib.zoho.DEFAULT_FIELD_LABELS; absent -> defaults apply."
         ),
     )
+
+    # Client identification. Domains are normally discovered from the client's Microsoft
+    # tenant (verified domains via Graph); this is only an override/extra for odd cases.
+    email_domains: list[str] = Field(
+        default_factory=list,
+        description="Optional extra email domains for this client (normally auto-discovered)",
+    )
+
+    # Ticket classification: extra subject keywords, merged with the defaults in lib/zoho.py.
+    starter_subject_keywords: list[str] = Field(default_factory=list)
+    leaver_subject_keywords: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "email_domains", "starter_subject_keywords", "leaver_subject_keywords", mode="after"
+    )
+    @classmethod
+    def _lowercase(cls, values: list[str]) -> list[str]:
+        return [v.strip().lower() for v in values if v and v.strip()]
 
     # Safety
     approval_required: bool = True
