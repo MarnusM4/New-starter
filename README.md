@@ -1,11 +1,11 @@
 # Starter / Leaver Automation Agent
 
 An agent that automates **starter** (and later **leaver**) account provisioning for an
-MSP's clients, driven by tickets logged in the **HALO** ticketing system.
+MSP's clients, driven by tickets logged in the **Zoho Desk** ticketing system.
 
 When a client logs a starter ticket, the agent reads the new-user details, loads that
 client's process, provisions the account on the correct identity platform, assigns the
-license, applies group/permission templates, and writes the result back to the HALO ticket —
+license, applies group/permission templates, and writes the result back to the Zoho Desk ticket —
 removing repetitive manual provisioning while staying **safe and auditable**.
 
 > See [ROADMAP.md](ROADMAP.md) for the phased delivery plan and [CLAUDE.md](CLAUDE.md) for
@@ -16,11 +16,15 @@ removing repetitive manual provisioning while staying **safe and auditable**.
 ## How it works
 
 ```
-HALO ticket (type=Starter)
-   │  HALO Workflow → webhook → signature-verified Azure Function front door
+Zoho Form (client onboarding) ──emails ${zf:ALL_FIELDS} summary──► helpdesk mailbox
+   │                                                                     │
+   ▼                                                          becomes a Zoho Desk ticket
+Zoho Desk ticket (Starter)
+   │  Zoho Desk workflow → webhook → token-verified Azure Function front door
    ▼
-Orchestrator / Agent  ── reads ticket + user-info table (HALO API)
-   │                  ── resolves client → loads clients/<client>.yaml
+Orchestrator / Agent  ── reads the form summary from the ticket body (Zoho Desk API)
+   │                  ── identifies client (email domains / company name) → loads clients/<client>.yaml
+   │                  ── classifies starter / leaver from the subject (unclear → technician)
    │                  ── validates ticket data (treat as untrusted)
    │                  ── HUMAN APPROVAL GATE (privileged action)
    ▼
@@ -29,12 +33,22 @@ Constrained action layer (holds the privileged credentials)
    └─ Local-AD path     → Azure Automation Hybrid Worker runbook (PowerShell AD module)
                           → Azure AD Connect syncs user up to Entra
    ▼
-Write result back to HALO ticket (note + status)  +  append to audit log
+Write result back to Zoho Desk ticket (note + status)  +  append to audit log
 ```
 
-### Trigger — HALO webhook
+### Intake — Zoho Forms → email summary → Zoho Desk ticket
 
-A HALO Workflow fires a webhook on starter/leaver tickets to a signature-verified **Azure
+Onboarding requests originate from a **Zoho Form** (one per client). On submit, Zoho Forms
+emails a `${zf:ALL_FIELDS}` **form summary** — a clean `Label : Value` block — to the
+helpdesk mailbox, which becomes a **Zoho Desk ticket**. The starter details therefore live in
+the ticket **body/description**, not in structured custom fields. The agent parses that
+labelled block ([lib/zoho.py](lib/zoho.py) `parse_summary` + `DEFAULT_FIELD_LABELS`), treating
+the body as **untrusted** — only whitelisted labels are read. A digital PDF of the form is
+also attached, but the email summary is the source of truth (no PDF parsing / OCR).
+
+### Trigger — Zoho Desk webhook
+
+A Zoho Desk workflow fires a webhook on starter/leaver tickets to a token-verified **Azure
 Function** front door, which invokes the per-ticket core in real time. A lightweight
 scheduled **reconciliation poll** (`reconcile_poll` timer, every 15 min) is kept as a
 safety net to catch missed/failed webhook deliveries — it re-drives open starter/leaver
@@ -73,19 +87,81 @@ role_group_map:             # optional: map ticket "role" field → extra groups
   Sales: [CRM-Users, Sales-Shared]
 usage_location: GB
 approval_required: true
+field_labels:               # optional: override intake form labels for this client
+  job_title: "Position"     # only override labels that differ from the Flawless defaults
 ```
 
 For the `local_ad` path the file also carries `automation_account`, `hybrid_worker_group`,
 `subscription_id`, `resource_group`, `runbook_name`, and `ou_path`.
 
-`clients/_schema.py` defines the shape so a malformed client file fails fast.
+`clients/_schema.py` defines the shape so a malformed client file fails fast. The optional
+`field_labels` map overrides [lib/zoho.py](lib/zoho.py) `DEFAULT_FIELD_LABELS` per client, for
+clients whose form uses different label wording; absent, the defaults apply.
 
-### Mapping a HALO client to its config
+### Mapping a client to its config
 
-The agent reads the client off the HALO ticket, then maps it to a config file via the
-lookup table `clients/_lookup.yaml` (HALO client id → config file stem). Using HALO's
-numeric client id keeps the mapping stable when a client is renamed. A ticket from an
-**unmapped** client is flagged for a human (note + needs-attention status) — never guessed.
+Every client's onboarding form emails the **same** helpdesk mailbox, and each client's form
+asks different questions, so the ticket doesn't say which client it's for. The agent combines
+clues from the form summary (`lib/config.py` `identify_client`):
+
+- **Email domains** — every email address in the summary (requester, new starter, ...),
+  regardless of which question it answers. Each client's domains are **discovered
+  automatically** from its Microsoft tenant (verified domains via Graph `GET /domains`, cached
+  for 6h), so a client with several domains needs nothing listed, and a newly added domain is
+  picked up on the next refresh. Domains owned by no client (e.g. Flawless's own helpdesk
+  address in the email text) are ignored.
+- **Company's Name** — when a client's form has that question, mapped via the optional
+  aliases in `clients/_lookup.yaml` (case-insensitive).
+
+The clues must all point at **one** client. No match, or clues pointing at different clients
+(including a domain that shows up in two tenants), flags the ticket for a human (note +
+needs-attention status) — never guessed. Text typed on a form is never used as a file path:
+only known config file names are accepted.
+
+**Onboarding a new client** is creating their `clients/<client>.yaml` (tenant, identity path,
+licences, groups) — needed anyway to provision — and granting `Domain.Read.All` in their
+tenant. Domain matching then works with no further setup. Optional `email_domains:` in the
+client file covers a domain that isn't verified in the tenant.
+
+### Starter vs leaver
+
+Form titles vary per client ("Onboarding", "New Starter IT Form", "New User", ...), so the
+ticket **subject** is matched against keyword lists (`lib/zoho.py` `classify_subject`):
+starter — onboarding, new starter, new user, new employee, new hire, joiner; leaver —
+offboarding, leaver, exit, termination, departure. A client with other wording adds
+`starter_subject_keywords` / `leaver_subject_keywords` to its file. A subject that matches
+**neither or both** is flagged for a technician; it never creates an account.
+
+### Flagging & alerts
+
+When the agent can't safely act (client not identified or ambiguous, starter/leaver unclear,
+missing or invalid details, self-approval, provisioning failed), it **flags** the ticket and
+takes no action in any client tenant:
+
+1. **Internal comment** on the Zoho Desk ticket (private — the requester doesn't see it)
+   saying what went wrong.
+2. **Ticket status** moves to **"Needs Attention"** (or **"Automation Failed"** when
+   provisioning itself failed), so it shows up in a Desk view technicians already watch.
+3. **Teams alert** — an Adaptive Card in the ops channel with the reason, ticket number and an
+   **Open ticket** button (`lib/notify.py`). Teams pushes it to phones through the Teams app.
+4. **Audit entry** tied to the ticket id.
+
+Setup:
+
+- **Zoho Desk** — create four custom ticket statuses (Setup → Customization → Ticket statuses):
+  *Awaiting Approval*, *Provisioned*, *Automation Failed*, *Needs Attention*. Different names
+  are fine; set them via `ZOHO_STATUS_AWAITING_APPROVAL` / `_COMPLETED` / `_FAILED` /
+  `_NEEDS_ATTENTION`. Add a Desk view filtered on *Needs Attention* + *Automation Failed*.
+- **Teams** — in the target channel: **Workflows → "Post to a channel when a webhook request
+  is received"**, then copy the webhook URL into `TEAMS_WEBHOOK_URL` (Key Vault in production —
+  the URL carries a signature). Microsoft retired the older Office 365 "Incoming Webhook"
+  connectors in May 2026, so a Workflows webhook is required.
+- **Ticket link** — set `ZOHO_DESK_TICKET_URL` to your Desk ticket URL pattern with
+  `{ticket_id}` in place of the number (copy any ticket's URL from the browser) to get the
+  **Open ticket** button.
+
+If `TEAMS_WEBHOOK_URL` isn't set the alert is only logged; a failed alert never stops ticket
+processing.
 
 ---
 
@@ -93,8 +169,8 @@ numeric client id keeps the mapping stable when a client is renamed. A ticket fr
 
 | System | Use | Auth / permissions |
 |---|---|---|
-| **HALO API** | Read ticket + custom-field table, post note, update status | OAuth2 client credentials; one scoped HALO API application |
-| **Microsoft Graph** | Entra path: create user, `assignLicense`, group add | App registration **per client tenant** (or multi-tenant, consented per tenant); least-privilege app permissions, e.g. `User.ReadWrite.All`, `Group.ReadWrite.All`, `Organization.Read.All` |
+| **Zoho Desk API** | Read ticket body (form summary), post comment, update status | OAuth2 refresh-token grant; one scoped Zoho Desk self-client application |
+| **Microsoft Graph** | Entra path: create user, `assignLicense`, group add | App registration **per client tenant** (or multi-tenant, consented per tenant); least-privilege app permissions, e.g. `User.ReadWrite.All`, `Group.ReadWrite.All`, `Organization.Read.All`, `Domain.Read.All` (client identification) |
 | **Azure Automation** | Local-AD path: trigger runbook on Hybrid Worker | Azure REST API; runbook + Hybrid Runbook Worker per local-AD client |
 | **On-prem AD** | `New-ADUser`, group membership (via runbook) | PowerShell `ActiveDirectory` module on the Hybrid Worker; credentials scoped per client |
 
@@ -124,10 +200,10 @@ Privileged credentials are held by the **constrained action layer**, never by th
   (insert-if-absent) before any privileged write, so a concurrent webhook + reconciliation
   poll (or a duplicate/replayed delivery) can't double-provision; a failed attempt releases
   the claim so the poll can retry.
-- **Webhook front door:** Azure function key **plus** an HMAC-SHA256 signature verified over
-  the raw body before any work (`agent/webhook.py`), fail-closed on a missing/placeholder
-  secret. The secret resolves via Key Vault like every other secret. Optional replay window
-  (`HALO_WEBHOOK_MAX_SKEW`) rejects stale, replayed deliveries.
+- **Webhook front door:** Azure function key **plus** a shared-secret token the Desk
+  workflow sends, verified in constant time before any work (`agent/webhook.py`),
+  fail-closed on a missing/placeholder secret. The secret resolves via Key Vault like every
+  other secret. Optional replay window (`ZOHO_WEBHOOK_MAX_SKEW`) rejects stale deliveries.
 - **Retry/backoff** on all REST calls (429/5xx); **alerting** (`lib/notify.py`) on
   failed / needs-attention outcomes. Client-visible notes and external alerts carry a
   correlation `run_id` rather than raw internal error text.
@@ -152,18 +228,18 @@ Conosco's subscription:
 
 | Component | Role | Always-on |
 |---|---|---|
-| **Azure Function App** (`function_app.py`) | Core: `halo_webhook` (HTTP trigger) + `reconcile_poll` (timer) | Yes — serverless, Microsoft-managed |
-| **Azure Key Vault** | Holds HALO + Microsoft credentials | Yes |
+| **Azure Function App** (`function_app.py`) | Core: `zoho_webhook` (HTTP trigger) + `reconcile_poll` (timer) | Yes — serverless, Microsoft-managed |
+| **Azure Key Vault** | Holds Zoho Desk + Microsoft credentials | Yes |
 | **Azure Storage / Table** | Durable idempotency state + Functions runtime | Yes |
 | **Application Insights** | Logging, monitoring, alerting | Yes |
 | **Azure Automation account** | Triggers runbooks on Hybrid Workers (local-AD path) | Yes |
 | **Hybrid Runbook Worker** | *Only for local-AD clients* — runs PowerShell to create on-prem AD accounts | Must stay powered on (in the client's network) |
-| **HALO** (PSA) | Sends the trigger webhook; receives write-back | Already hosted |
+| **Zoho Desk** (PSA) | Sends the trigger webhook; receives write-back | Already hosted |
 | **Microsoft Entra / Graph** | Where cloud accounts are created | Microsoft cloud |
 
 ```
             (Microsoft Azure — Conosco's tenant, 24/7)
-HALO ──webhook──► Azure Function App ──► Entra / Graph (cloud accounts)
+Zoho Desk ─webhook─► Azure Function App ──► Entra / Graph (cloud accounts)
   ▲                  │   │
   └──writes back─────┘   └──► local-AD clients: Azure Automation ──► Hybrid Worker
                                                   (in client network) ──► on-prem AD
@@ -176,8 +252,8 @@ The "Azure app" is an **Azure Function App** — a managed, serverless host for 
 code. We deploy `function_app.py` to it; Azure runs our functions on demand in response to
 triggers and scales instances automatically. Key facts:
 
-- **Two functions, two triggers.** `halo_webhook` is an **HTTP trigger** (a public HTTPS
-  endpoint HALO calls). `reconcile_poll` is a **timer trigger** (cron, every 15 min) that
+- **Two functions, two triggers.** `zoho_webhook` is an **HTTP trigger** (a public HTTPS
+  endpoint Zoho Desk calls). `reconcile_poll` is a **timer trigger** (cron, every 15 min) that
   re-checks open tickets as a safety net.
 - **Runtime:** Python (3.11) worker. Dependencies from `requirements.txt`.
 - **Stateless by design.** Each invocation is independent; any "have I done this already?"
@@ -188,16 +264,17 @@ triggers and scales instances automatically. Key facts:
     (a few seconds' delay when idle). Fine for provisioning, which isn't sub-second.
   - *Premium / Flex Consumption* — keeps an instance warm (no cold start) and supports
     **VNet integration** (private networking). Recommended if we need private connectivity
-    to on-prem/HALO or guaranteed instant response. Small fixed monthly cost.
+    to on-prem/Zoho Desk or guaranteed instant response. Small fixed monthly cost.
 - **Identity & secrets:** the Function App uses a **Managed Identity** to read Key Vault and
   start Automation runbooks — so no secrets are stored in the app itself.
-- **Securing the webhook:** Azure function-level auth key **plus** our own HMAC signature
-  check (`agent/webhook.py`); HTTPS only.
+- **Securing the webhook:** Azure function-level auth key **plus** our own shared-secret
+  token check (`agent/webhook.py`); HTTPS only.
 - **Networking:** public HTTPS by default. To reach private/on-prem resources directly, use
   the Premium plan with VNet integration; the local-AD path avoids inbound holes entirely
   because the Hybrid Worker polls Azure outbound.
 - **Monitoring/alerting:** Application Insights captures logs/metrics; failures and
-  needs-attention outcomes also fire `lib/notify.py` to an ops channel.
+  needs-attention outcomes also post a Teams card via `lib/notify.py` (see "Flagging &
+  alerts").
 - **Deployment:** push from this git repo to the Function App via `func azure functionapp
   publish` or a CI/CD pipeline (GitHub Actions / Azure DevOps). Updates deploy with no
   downtime.
@@ -208,7 +285,7 @@ triggers and scales instances automatically. Key facts:
 certificates) securely so they never live in our code or git repo. How it works:
 
 - **Secrets are named entries.** Each secret is a name → value pair, e.g.
-  `halo-client-secret` → the actual HALO API secret. Values are encrypted at rest and only
+  `zoho-refresh-token` → the actual Zoho Desk refresh token. Values are encrypted at rest and only
   ever sent over TLS.
 - **Access is identity-based, not password-based.** Nothing "logs in" to the vault with
   another password. Our Function App has a **Managed Identity** (an identity Azure manages
@@ -267,16 +344,16 @@ not a live integration.
 ## Repository structure
 
 ```
-function_app.py   Azure Functions: halo_webhook (HTTP) + reconcile_poll (timer)
+function_app.py   Azure Functions: zoho_webhook (HTTP) + reconcile_poll (timer)
 /agent            orchestrator core, approval gate/dispatcher, reconciliation, webhook auth
 /skills           starter-provisioning skill(s): step-by-step process the agent follows
 /actions          constrained action layer (create_user, assign_license, add_groups, ...)
   /entra          Microsoft Graph implementations
   /local_ad       Hybrid Runbook Worker / Azure Automation runbook callers
-/clients          per-client YAML config + schema + _lookup.yaml (HALO id -> config)
-/lib              HALO client, config loader, Graph/Automation transports, state, audit
+/clients          per-client YAML config + schema + _lookup.yaml (Zoho Desk id -> config)
+/lib              Zoho Desk client, config loader, Graph/Automation transports, state, audit
 /config           non-secret settings (poll interval, endpoints)
-/tests            unit tests (HALO parsing, config validation) + mocked action tests
+/tests            unit tests (Zoho Desk parsing, config validation) + mocked action tests
 ```
 
 ---

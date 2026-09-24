@@ -48,7 +48,7 @@ class ProvisioningPlan(BaseModel):
     allow_existing_user: bool = False
 
     def to_note(self) -> str:
-        """Human-readable summary for the HALO ticket note / approval gate."""
+        """Human-readable summary for the ticket note / approval gate."""
         lines = [
             "**Proposed provisioning plan**",
             f"- Client: {self.client_id}",

@@ -4,8 +4,14 @@ Working notes for Claude / contributors on this repository.
 
 ## What this project is
 
-An agent that automates **starter/leaver** account provisioning for MSP clients, triggered
-by **HALO** tickets. For the full picture, read these two files first — they are the source
+An agent that automates **starter/leaver** account provisioning for MSP clients. Requests
+originate from **Zoho Forms** (one onboarding form per client); Zoho Forms emails a
+`${zf:ALL_FIELDS}` summary to the helpdesk mailbox, which becomes a **Zoho Desk** ticket. The
+agent parses the `Label : Value` summary out of the ticket body (`lib/zoho.py`
+`parse_summary`), identifies the client from the email domains in it (auto-discovered from
+each client's Microsoft tenant) and/or the "Company's Name" answer, classifies starter vs
+leaver from the subject, and drives the provisioning core. Anything unclear is flagged for a
+technician, never guessed. For the full picture, read these two files first — they are the source
 of truth and should be kept in sync with any change:
 
 - **[README.md](README.md)** — architecture, identity paths, APIs & permissions, security,

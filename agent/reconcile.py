@@ -19,24 +19,24 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from agent.orchestrator import process_ticket  # noqa: E402
 from lib.audit import audit, new_run_id  # noqa: E402
-from lib.halo import HaloClient  # noqa: E402
+from lib.zoho import ZohoDeskClient  # noqa: E402
 from lib.state import StateStore  # noqa: E402
 
 
 def run_reconciliation(
-    halo: HaloClient | None = None,
+    desk: ZohoDeskClient | None = None,
     state: StateStore | None = None,
 ) -> dict[str, Any]:
-    halo = halo or HaloClient()
+    desk = desk or ZohoDeskClient()
     run_id = new_run_id()
 
-    ticket_ids = halo.list_open_starter_leaver_ticket_ids()
+    ticket_ids = desk.list_open_starter_leaver_ticket_ids()
     audit("reconcile.start", "-", run_id=run_id, candidate_count=len(ticket_ids))
 
     processed, failed = 0, 0
     for ticket_id in ticket_ids:
         try:
-            process_ticket(ticket_id, halo=halo, state=state)
+            process_ticket(ticket_id, desk=desk, state=state)
             processed += 1
         except Exception as exc:  # noqa: BLE001 - one bad ticket must not stop the batch
             failed += 1

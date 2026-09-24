@@ -17,4 +17,22 @@ usage_location: GB
 upn_suffix: acme.com            # UPN/email domain; omit to use the tenant default
 username_format: "{first}.{last}"  # tokens: {first} {last} {first_initial} {last_initial}
 
+# Optional: override the intake form labels for THIS client, if their Zoho Form uses
+# different wording than the Flawless defaults (lib/zoho.DEFAULT_FIELD_LABELS). Only the
+# canonical fields you list here are overridden; the rest fall back to the defaults.
+# field_labels:
+#   new_starter_name: "New Employee Full Name"
+#   job_title: "Position"
+#   start_date: "First Day"
+
+# Optional, normally NOT needed: this client's email domains are read automatically from its
+# Microsoft tenant (verified domains). Only list a domain here if it isn't verified there.
+# email_domains:
+#   - legacy-brand.com
+
+# Optional: extra subject wording for this client's forms, on top of the defaults
+# (onboarding / new starter / new user ... and offboarding / leaver / exit ...).
+# starter_subject_keywords: ["it request"]
+# leaver_subject_keywords: ["staff departure form"]
+
 approval_required: true

@@ -1,7 +1,7 @@
-"""Azure Functions app — HALO webhook front door + reconciliation poll.
+"""Azure Functions app — Zoho Desk webhook front door + reconciliation poll.
 
-- halo_webhook (HTTP): real-time trigger. Verifies the HALO signature, then hands the
-  ticket id to the trigger-agnostic orchestrator (Phase A–C).
+- zoho_webhook (HTTP): real-time trigger. Verifies the Desk webhook shared-secret token,
+  then hands the ticket id to the trigger-agnostic orchestrator (Phase A–C).
 - reconcile_poll (timer): safety net. Periodically re-drives open starter/leaver tickets
   through the same core; durable idempotency means already-handled tickets are skipped.
 
@@ -27,8 +27,8 @@ from agent.webhook import (
 app = func.FunctionApp()
 
 
-@app.route(route="halo-webhook", auth_level=func.AuthLevel.FUNCTION)
-def halo_webhook(req: func.HttpRequest) -> func.HttpResponse:
+@app.route(route="zoho-webhook", auth_level=func.AuthLevel.FUNCTION)
+def zoho_webhook(req: func.HttpRequest) -> func.HttpResponse:
     raw = req.get_body()
 
     if not verify_signature(
@@ -50,7 +50,7 @@ def halo_webhook(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         plan = process_ticket(ticket_id)
-    except Exception:  # noqa: BLE001 - log and 500 so HALO retries
+    except Exception:  # noqa: BLE001 - log and 500 so Desk retries
         logging.exception("Failed processing ticket %s", ticket_id)
         return func.HttpResponse("processing error", status_code=500)
 

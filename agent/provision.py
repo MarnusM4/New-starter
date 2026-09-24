@@ -5,7 +5,8 @@ The orchestrator builds a ProvisioningPlan, then:
   2. Once approved (or approval not required) -> dispatch to the matching action.
 
 The dispatcher is the ONLY place that triggers privileged writes. It routes by
-identity_path, runs the fixed operations, posts results back to HALO, and audits each step.
+identity_path, runs the fixed operations, posts results back to the Zoho Desk ticket, and
+audits each step.
 """
 
 from __future__ import annotations
@@ -22,10 +23,16 @@ from actions.local_ad.action import LocalAdAction  # noqa: E402
 from lib.audit import audit  # noqa: E402
 from lib.config import ClientConfig, IdentityPath  # noqa: E402
 
-# Placeholder approval signal. TODO: confirm how approval is represented in HALO
-# (a status id, a custom checkbox field, or a specific note). The webhook must be
-# configured to also fire on the ticket UPDATE that sets this.
+# Placeholder approval signal. TODO: confirm how approval is represented in Zoho Desk
+# (a named status, a custom checkbox/picklist field under `cf`, or a Blueprint transition).
+# The Desk webhook/workflow must be configured to also fire on the ticket UPDATE that sets
+# this so the approval re-enters the orchestrator.
 APPROVED_STATUS = "approved"
+
+
+def _cf(raw: dict[str, Any]) -> dict[str, Any]:
+    """Zoho Desk custom fields live under the `cf` object; tolerate its absence."""
+    return raw.get("cf", {}) or {}
 
 
 def is_approved(raw: dict[str, Any]) -> bool:
@@ -33,17 +40,34 @@ def is_approved(raw: dict[str, Any]) -> bool:
     status = str(raw.get("status", "")).lower()
     if status == APPROVED_STATUS:
         return True
-    return bool(raw.get("provisioning_approved", False))  # TODO: real custom-field name
+    # TODO: real Desk custom-field API name for the approval flag.
+    return bool(_cf(raw).get("cf_provisioning_approved") or raw.get("provisioning_approved", False))
 
 
 def approver(raw: dict[str, Any]) -> str:
-    """Who approved (for the audit trail). TODO: real HALO field for the approving agent."""
-    return str(raw.get("approved_by") or raw.get("agent") or "unknown")
+    """Who approved (for the audit trail). TODO: real Desk field for the approving agent."""
+    return str(
+        _cf(raw).get("cf_approved_by")
+        or raw.get("approved_by")
+        or raw.get("assigneeId")
+        or "unknown"
+    )
 
 
 def requester(raw: dict[str, Any]) -> str:
-    """Who raised the request. TODO: confirm the real HALO field(s)."""
-    return str(raw.get("reported_by") or raw.get("requester") or raw.get("user") or "")
+    """Who raised the request. TODO: confirm the real Desk field(s).
+
+    Desk exposes the requester under `contact` (e.g. contact.email); fall back to the
+    generic keys used elsewhere/in tests.
+    """
+    contact = raw.get("contact", {}) or {}
+    return str(
+        contact.get("email")
+        or raw.get("reported_by")
+        or raw.get("requester")
+        or raw.get("email")
+        or ""
+    )
 
 
 def self_approved(raw: dict[str, Any]) -> bool:
