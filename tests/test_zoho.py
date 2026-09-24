@@ -134,3 +134,13 @@ def test_placeholder_credentials_do_no_network():
     assert client.list_open_starter_leaver_ticket_ids() == []
     client.post_note("1", "hello")  # prints, no raise
     client.update_status("1", STATUS_COMPLETED)  # prints, no raise
+
+
+def test_desk_status_defaults_and_env_override(monkeypatch):
+    from lib.zoho import desk_status_name
+
+    monkeypatch.delenv("ZOHO_STATUS_NEEDS_ATTENTION", raising=False)
+    assert desk_status_name(STATUS_NEEDS_ATTENTION) == "Needs Attention"
+    assert desk_status_name(STATUS_FAILED) == "Automation Failed"
+    monkeypatch.setenv("ZOHO_STATUS_NEEDS_ATTENTION", "Escalated - Automation")
+    assert desk_status_name(STATUS_NEEDS_ATTENTION) == "Escalated - Automation"

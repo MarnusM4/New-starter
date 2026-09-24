@@ -111,7 +111,8 @@ A hardening pass landed alongside Phases B–D. Done now:
 - **Key Vault secret resolution** — `get_secret` falls back to Key Vault when
   `KEY_VAULT_URL` is set (`lib/secrets.py`).
 - **Operator alerting** — failed / unknown-client outcomes call `notify()`
-  (Teams/Slack webhook via `NOTIFY_WEBHOOK_URL`) (`lib/notify.py`).
+  (Teams Workflows webhook via `TEAMS_WEBHOOK_URL`, Adaptive Card with an "Open ticket"
+  button) (`lib/notify.py`).
 - **Client schema** — added `upn_suffix` and `username_format`.
 - **Pinned dependency ranges** (`requirements.txt`).
 
@@ -147,8 +148,9 @@ real tenants:
    placeholder fields.
 5. **Real Zoho Desk field labels + status names** — confirm each client form's labels
    (`DEFAULT_FIELD_LABELS` / per-client `field_labels`), any subject wording outside the
-   default keywords, and the Desk status names in `STATUS_NAME_MAP` (still placeholders).
+   default keywords, and create the Desk statuses named in `STATUS_NAME_MAP` (or override via `ZOHO_STATUS_*`).
    Grant `Domain.Read.All` in each client tenant so client domains are discovered.
-6. **Wire `NOTIFY_WEBHOOK_URL`** to the real ops channel and test delivery.
+6. **Create the Teams Workflows webhook + Desk statuses** — set `TEAMS_WEBHOOK_URL` and
+   `ZOHO_DESK_TICKET_URL`, create the four custom statuses in Desk, and test a flagged ticket.
 7. **Local-AD post-sync licensing** — after AD Connect sync, apply Entra licensing/cloud
    groups for `local_ad` clients (currently noted as pending-sync only).

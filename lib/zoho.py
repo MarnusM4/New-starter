@@ -229,11 +229,11 @@ class ZohoDeskClient:
     def update_status(self, ticket_id: str, status: str) -> None:
         """Move the ticket to a new status.
 
-        Zoho Desk statuses are **named** strings (unlike HALO's numeric ids). Map our
-        logical status names (see STATUS_NAME_MAP) to the real Desk status names configured
-        for your instance before going live.
+        Zoho Desk statuses are **named** strings (unlike HALO's numeric ids). Our logical
+        names map to the custom Desk statuses via desk_status_name (STATUS_NAME_MAP defaults,
+        ZOHO_STATUS_* overrides).
         """
-        desk_status = STATUS_NAME_MAP.get(status, status)
+        desk_status = desk_status_name(status)
         if self._is_placeholder():
             print(f"[ZOHO PLACEHOLDER] would set ticket {ticket_id} status -> {status} ({desk_status})")
             return
@@ -380,21 +380,27 @@ def classify_subject(subject: str, config: ClientConfig | None = None) -> Ticket
     return TicketType.UNKNOWN
 
 
-# Logical status names used by the orchestrator. TODO: replace values with the real Zoho
-# Desk status names configured for your instance. Desk ships with "Open"/"On Hold"/"Closed"
-# by default; add custom statuses (e.g. "Awaiting Approval", "Provisioned") in Desk and map
-# them here.
+# Logical status names used by the orchestrator, mapped to the custom ticket statuses you
+# create in Zoho Desk (Setup -> Customization -> Ticket statuses). Flagged tickets land in
+# "Needs Attention" / "Automation Failed", so a Desk view on those shows everything the agent
+# couldn't handle. Rename any of them without a code change via the ZOHO_STATUS_* settings.
 STATUS_AWAITING_APPROVAL = "awaiting_approval"
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
 STATUS_NEEDS_ATTENTION = "needs_attention"
 
 STATUS_NAME_MAP: dict[str, str] = {
-    STATUS_AWAITING_APPROVAL: "PLACEHOLDER_STATUS_AWAITING",
-    STATUS_COMPLETED: "PLACEHOLDER_STATUS_COMPLETED",
-    STATUS_FAILED: "PLACEHOLDER_STATUS_FAILED",
-    STATUS_NEEDS_ATTENTION: "PLACEHOLDER_STATUS_NEEDS_ATTENTION",
+    STATUS_AWAITING_APPROVAL: "Awaiting Approval",
+    STATUS_COMPLETED: "Provisioned",
+    STATUS_FAILED: "Automation Failed",
+    STATUS_NEEDS_ATTENTION: "Needs Attention",
 }
+
+
+def desk_status_name(status: str) -> str:
+    """The Desk status name for a logical status: ZOHO_STATUS_<NAME> env override, else default."""
+    override = os.environ.get(f"ZOHO_STATUS_{status.upper()}", "").strip()
+    return override or STATUS_NAME_MAP.get(status, status)
 
 
 def ticket_id_fallback(raw: dict[str, Any]) -> str:

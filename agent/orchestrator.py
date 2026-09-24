@@ -148,7 +148,10 @@ def process_ticket(
             "No action taken.",
         )
         desk.update_status(ticket_id, STATUS_NEEDS_ATTENTION)
-        notify(f"Ticket {ticket_id}: invalid/missing starter details — needs attention.")
+        notify(
+            f"Ticket {ticket_id}: invalid/missing starter details — needs attention.",
+            ticket_id=ticket_id,
+        )
         return None
     audit("ticket.parsed", ticket_id, run_id=run_id,
           client_id=ticket.client_id, type=ticket.ticket_type.value)
@@ -162,7 +165,10 @@ def process_ticket(
             "No action taken.",
         )
         desk.update_status(ticket_id, STATUS_NEEDS_ATTENTION)
-        notify(f"Ticket {ticket_id}: starter/leaver type unclear from subject — needs attention.")
+        notify(
+            f"Ticket {ticket_id}: starter/leaver type unclear from subject — needs attention.",
+            ticket_id=ticket_id,
+        )
         return None
 
     if ticket.ticket_type is not TicketType.STARTER:
@@ -188,7 +194,10 @@ def process_ticket(
             "No action taken.",
         )
         desk.update_status(ticket_id, STATUS_NEEDS_ATTENTION)
-        notify(f"Ticket {ticket_id}: client not identified ({ticket.client_id}) — needs attention.")
+        notify(
+            f"Ticket {ticket_id}: client not identified ({ticket.client_id}) — needs attention.",
+            ticket_id=ticket_id,
+        )
         return None
 
     # Build the plan — this validates ticket-derived inputs (e.g. the username) against
@@ -203,7 +212,7 @@ def process_ticket(
             "No action taken.",
         )
         desk.update_status(ticket_id, STATUS_NEEDS_ATTENTION)
-        notify(f"Ticket {ticket_id}: invalid ticket data — needs attention.")
+        notify(f"Ticket {ticket_id}: invalid ticket data — needs attention.", ticket_id=ticket_id)
         return None
     audit("plan.built", ticket_id, run_id=run_id, client_id=plan.client_id,
           identity_path=plan.identity_path, username=plan.username)
@@ -219,7 +228,10 @@ def process_ticket(
             "the account (separation of duties). A different authorised approver is required.",
         )
         desk.update_status(ticket_id, STATUS_NEEDS_ATTENTION)
-        notify(f"Ticket {ticket_id}: self-approval rejected — needs a separate approver.")
+        notify(
+            f"Ticket {ticket_id}: self-approval rejected — needs a separate approver.",
+            ticket_id=ticket_id,
+        )
         return plan
 
     # Approval gate: provision only when approved (or the client opted out of approval).
@@ -258,7 +270,10 @@ def process_ticket(
             f"❌ Provisioning failed (ref {run_id}). Flagged for a technician.",
         )
         desk.update_status(ticket_id, STATUS_FAILED)
-        notify(f"Ticket {ticket_id} (run {run_id}): provisioning FAILED — {_safe_detail(exc)}")
+        notify(
+            f"Ticket {ticket_id} (run {run_id}): provisioning FAILED — {_safe_detail(exc)}",
+            ticket_id=ticket_id,
+        )
         raise
 
     # Success: the provisioned marker claimed above stays set (idempotency complete).

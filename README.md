@@ -132,6 +132,37 @@ offboarding, leaver, exit, termination, departure. A client with other wording a
 `starter_subject_keywords` / `leaver_subject_keywords` to its file. A subject that matches
 **neither or both** is flagged for a technician; it never creates an account.
 
+### Flagging & alerts
+
+When the agent can't safely act (client not identified or ambiguous, starter/leaver unclear,
+missing or invalid details, self-approval, provisioning failed), it **flags** the ticket and
+takes no action in any client tenant:
+
+1. **Internal comment** on the Zoho Desk ticket (private — the requester doesn't see it)
+   saying what went wrong.
+2. **Ticket status** moves to **"Needs Attention"** (or **"Automation Failed"** when
+   provisioning itself failed), so it shows up in a Desk view technicians already watch.
+3. **Teams alert** — an Adaptive Card in the ops channel with the reason, ticket number and an
+   **Open ticket** button (`lib/notify.py`). Teams pushes it to phones through the Teams app.
+4. **Audit entry** tied to the ticket id.
+
+Setup:
+
+- **Zoho Desk** — create four custom ticket statuses (Setup → Customization → Ticket statuses):
+  *Awaiting Approval*, *Provisioned*, *Automation Failed*, *Needs Attention*. Different names
+  are fine; set them via `ZOHO_STATUS_AWAITING_APPROVAL` / `_COMPLETED` / `_FAILED` /
+  `_NEEDS_ATTENTION`. Add a Desk view filtered on *Needs Attention* + *Automation Failed*.
+- **Teams** — in the target channel: **Workflows → "Post to a channel when a webhook request
+  is received"**, then copy the webhook URL into `TEAMS_WEBHOOK_URL` (Key Vault in production —
+  the URL carries a signature). Microsoft retired the older Office 365 "Incoming Webhook"
+  connectors in May 2026, so a Workflows webhook is required.
+- **Ticket link** — set `ZOHO_DESK_TICKET_URL` to your Desk ticket URL pattern with
+  `{ticket_id}` in place of the number (copy any ticket's URL from the browser) to get the
+  **Open ticket** button.
+
+If `TEAMS_WEBHOOK_URL` isn't set the alert is only logged; a failed alert never stops ticket
+processing.
+
 ---
 
 ## APIs & permissions
@@ -242,7 +273,8 @@ triggers and scales instances automatically. Key facts:
   the Premium plan with VNet integration; the local-AD path avoids inbound holes entirely
   because the Hybrid Worker polls Azure outbound.
 - **Monitoring/alerting:** Application Insights captures logs/metrics; failures and
-  needs-attention outcomes also fire `lib/notify.py` to an ops channel.
+  needs-attention outcomes also post a Teams card via `lib/notify.py` (see "Flagging &
+  alerts").
 - **Deployment:** push from this git repo to the Function App via `func azure functionapp
   publish` or a CI/CD pipeline (GitHub Actions / Azure DevOps). Updates deploy with no
   downtime.
