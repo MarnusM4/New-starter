@@ -148,10 +148,20 @@ takes no action in any client tenant:
 
 Setup:
 
-- **Zoho Desk** — create four custom ticket statuses (Setup → Customization → Ticket statuses):
-  *Awaiting Approval*, *Provisioned*, *Automation Failed*, *Needs Attention*. Different names
-  are fine; set them via `ZOHO_STATUS_AWAITING_APPROVAL` / `_COMPLETED` / `_FAILED` /
-  `_NEEDS_ATTENTION`. Add a Desk view filtered on *Needs Attention* + *Automation Failed*.
+- **Zoho Desk** — create five custom ticket statuses (Setup → Customization → Layouts and
+  Fields → Ticket Status → pick the department → Add Status):
+
+  | Status | Status type | Set by |
+  |---|---|---|
+  | Awaiting Approval | On Hold | agent — plan posted, waiting for a technician |
+  | Approved | Open | **technician** — the go-ahead; the next run creates the account |
+  | Needs Attention | Open | agent — flagged |
+  | Automation Failed | Open | agent — provisioning failed |
+  | Provisioned | Open | agent — account done (laptop/software tasks remain; close by hand) |
+
+  Different names are fine for the agent's four; set them via `ZOHO_STATUS_AWAITING_APPROVAL`
+  / `_COMPLETED` / `_FAILED` / `_NEEDS_ATTENTION`. "Approved" must be named exactly that.
+  Add a Desk view filtered on *Needs Attention* + *Automation Failed*.
 - **Teams** — in the target channel: **Workflows → "Post to a channel when a webhook request
   is received"**, then copy the webhook URL into `TEAMS_WEBHOOK_URL` (Key Vault in production —
   the URL carries a signature). Microsoft retired the older Office 365 "Incoming Webhook"
@@ -317,6 +327,85 @@ tickets), that would be an HTTPS call from the Function App to the **Anthropic A
 
 ---
 
+## Testing on your own tenant first
+
+Before pointing the agent at a client, run it end to end against **your own Microsoft
+tenant** from your own PC — no Azure deployment needed. `tools/run_ticket.py` runs the real
+agent logic against one real Desk ticket:
+
+```
+python tools/run_ticket.py "#101"          # PREVIEW: shows what it would do, changes nothing
+python tools/run_ticket.py "#101" --live   # does it for real
+```
+
+Preview reads the ticket from Desk and your tenant's domains from Microsoft, then prints the
+parsed details, the client it identified, and exactly what a live run would do (comment,
+status, account) — without writing anything to Desk or Microsoft, sending alerts, or
+touching `audit.log` / `state.json`. Quote `"#101"`: `#` starts a comment in most shells.
+The long id from the ticket's browser address also works.
+
+**1. Python on your PC** (3.11+), in the repo folder:
+```
+python -m venv .venv
+.venv\Scripts\activate          # Windows   (macOS/Linux: source .venv/bin/activate)
+pip install -r requirements.txt
+copy .env.example .env           # macOS/Linux: cp .env.example .env
+```
+
+**2. Desk statuses** — the five statuses in "Flagging & alerts" above.
+
+**3. Zoho API access.** In the Zoho API console for your data centre
+(`api-console.zoho.com`, or `.eu` / `.in` / `.com.au`) add a **Self Client**; put its Client ID
+and Secret in `.env` as `ZOHO_CLIENT_ID` / `ZOHO_CLIENT_SECRET`. "Generate Code" with scope
+`Desk.tickets.ALL,Desk.basic.READ`, then straight away (codes expire in minutes):
+```
+python tools/zoho_token.py --region com --code <the code>
+```
+It prints `ZOHO_REFRESH_TOKEN`, `ZOHO_ORG_ID` and the regional URLs — paste them into `.env`.
+
+**4. App registration in your tenant** (Entra admin centre → App registrations → New):
+add Microsoft Graph **application** permissions `User.ReadWrite.All`,
+`Group.ReadWrite.All`, `Organization.Read.All`, `Domain.Read.All`, then **Grant admin
+consent**. Create a client secret. In `.env` set `AZURE_CLIENT_ID` (the app's Application ID)
+and `AZURE_CLIENT_SECRET`.
+
+**5. A client file for your tenant** — `clients/test-<yourname>.yaml`. Files named
+`clients/test-*.yaml` are git-ignored, so your tenant's details never reach the repo:
+```yaml
+client_id: test-yourname        # must match the file name
+identity_path: entra
+tenant_id: <your tenant id>     # Entra admin centre → Overview
+license_skus: []                # none needed; add e.g. O365_BUSINESS_PREMIUM if you have spares
+default_groups: []              # or names of groups that exist in your tenant
+usage_location: ZA
+approval_required: true
+```
+
+**6. A test ticket.** Submit one of the onboarding forms (or email the helpdesk with a
+`Label : Value` summary pasted in) where the email addresses use **your tenant's domain**
+(e.g. `you@yourtenant.onmicrosoft.com`) — that's how the agent knows it's your "client" —
+with a subject such as "New Starter IT Form".
+
+**7. Preview** — `python tools/run_ticket.py "#<number>"`. Check the client, name, username
+and plan. Exit code 1 means a live run would flag it, and the output says why.
+
+**8. Live, step by step.**
+1. `python tools/run_ticket.py "#<number>" --live` → the plan is posted as an internal
+   comment and the ticket moves to *Awaiting Approval*.
+2. In Desk, set the ticket to **Approved**.
+3. Run the same `--live` command again → the account is created in your tenant and the
+   ticket moves to *Provisioned*. Running it again does nothing (it remembers, via
+   `state.json`).
+
+**9. Check in Entra** that the user exists with the right name and username. The agent
+doesn't hand out the temporary password yet, so **reset the password** in Entra to sign in.
+Delete the test user afterwards.
+
+Optional: set `TEAMS_WEBHOOK_URL` and run a ticket that can't be matched (e.g. a gmail
+address only) to see the Teams alert.
+
+---
+
 ## Demo / simulation
 
 `demo/starter-leaver-demo.html` is a **self-contained, no-setup demo** for showing the
@@ -350,7 +439,8 @@ function_app.py   Azure Functions: zoho_webhook (HTTP) + reconcile_poll (timer)
 /actions          constrained action layer (create_user, assign_license, add_groups, ...)
   /entra          Microsoft Graph implementations
   /local_ad       Hybrid Runbook Worker / Azure Automation runbook callers
-/clients          per-client YAML config + schema + _lookup.yaml (Zoho Desk id -> config)
+/clients          per-client YAML config + schema + _lookup.yaml (company-name aliases)
+/tools            run_ticket.py (run one real ticket: preview / --live), zoho_token.py
 /lib              Zoho Desk client, config loader, Graph/Automation transports, state, audit
 /config           non-secret settings (poll interval, endpoints)
 /tests            unit tests (Zoho Desk parsing, config validation) + mocked action tests

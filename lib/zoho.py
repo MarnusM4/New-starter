@@ -95,6 +95,24 @@ class ZohoDeskClient:
         }
 
     # ------------------------------------------------------------------ reads
+    def ticket_id_for_number(self, number: str) -> str:
+        """The API ticket id for the ticket number shown in Desk (e.g. "101" for #101)."""
+        def call() -> list[dict[str, Any]]:
+            resp = requests.get(
+                f"{self.base_url}/api/v1/tickets/search",
+                headers=self._headers(),
+                params={"ticketNumber": number.lstrip("#"), "limit": 1},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            # Desk answers 204 No Content when nothing matches.
+            return resp.json().get("data", []) if resp.content else []
+
+        matches = with_retries(call)
+        if not matches:
+            raise LookupError(f"No Desk ticket with number #{number.lstrip('#')}")
+        return str(matches[0]["id"])
+
     def get_ticket_raw(self, ticket_id: str) -> dict[str, Any]:
         """Fetch the raw ticket JSON.
 
