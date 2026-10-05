@@ -273,3 +273,13 @@ def test_search_403_explains_missing_scope(capsys):
     assert run_ticket.main(["#70051"], desk=NoSearchDesk(_raw()), state=InMemoryState()) == 2
     out = capsys.readouterr().out
     assert "Desk.search.READ" in out and "long id" in out
+
+
+def test_preview_ordinary_ticket_says_left_alone(forbid_side_effects, capsys):
+    desk = FakeDesk(_raw(subject="Extension 1307 goes to voicemail",
+                         description="Hi, 1307 rings once then voicemail."))
+    assert run_ticket.main(["T1"], desk=desk, state=InMemoryState()) == 0
+    out = capsys.readouterr().out
+    assert "Type:      other" in out
+    assert "leaves it alone" in out
+    assert "would set" not in out and "would post" not in out and "Teams" not in out

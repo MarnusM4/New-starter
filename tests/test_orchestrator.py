@@ -155,3 +155,13 @@ def test_unclear_ticket_type_flags_for_human(monkeypatch):
     assert called["provision"] == 0
     assert fake.statuses == ["needs_attention"]
     assert "starter or a leaver" in fake.notes[0][1]
+
+
+def test_ordinary_ticket_is_left_completely_alone(monkeypatch):
+    """Not an onboarding/offboarding ticket: no comment, no status change, no alert."""
+    alerts = []
+    monkeypatch.setattr(orchestrator, "notify", lambda *a, **k: alerts.append(a))
+    monkeypatch.setattr(orchestrator, "provision", lambda *a, **k: alerts.append("provision"))
+    fake = FakeDesk(_raw(type="other"))
+    assert process_ticket("T-1001", desk=fake, state=InMemoryState()) is None
+    assert fake.notes == [] and fake.statuses == [] and alerts == []

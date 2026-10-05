@@ -132,6 +132,13 @@ offboarding, leaver, exit, termination, departure. A client with other wording a
 `starter_subject_keywords` / `leaver_subject_keywords` to its file. A subject that matches
 **neither or both** is flagged for a technician; it never creates an account.
 
+**Ordinary support tickets are left alone.** A ticket with no starter/leaver wording in its
+subject **and** no form summary in its body (no "New Starter's Name", NS email or start
+date) isn't an onboarding request at all: the agent does nothing to it — no comment, no
+status change, no alert. Only tickets that are clearly forms but can't be classified get
+flagged. The Desk workflow that triggers the agent should still only fire for
+onboarding/offboarding subjects; this is the safety net.
+
 ### Flagging & alerts
 
 When the agent can't safely act (client not identified or ambiguous, starter/leaver unclear,

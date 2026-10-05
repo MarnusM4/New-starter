@@ -158,8 +158,8 @@ def preview_hooks() -> Iterator[None]:
 # --------------------------------------------------------------------------- summary
 
 
-def print_summary(desk: Any, ticket_id: str) -> None:
-    """What the agent read off the ticket, before it decides anything."""
+def print_summary(desk: Any, ticket_id: str) -> str | None:
+    """What the agent read off the ticket, before it decides anything. Returns its type."""
     from agent.provision import is_approved
 
     raw = desk.get_ticket_raw(ticket_id)
@@ -170,7 +170,7 @@ def print_summary(desk: Any, ticket_id: str) -> None:
         ticket = desk.parse_ticket(raw)
     except Exception as exc:  # noqa: BLE001 - shown, then the run reports the flag
         print(f"Parse:     FAILED — {' '.join(str(exc).split())[:300]}")
-        return
+        return None
     print(f"Client:    {ticket.client_id}")
     print(f"Type:      {ticket.ticket_type.value}")
     if ticket.starter:
@@ -178,6 +178,7 @@ def print_summary(desk: Any, ticket_id: str) -> None:
             if value:
                 print(f"  {name}: {value}")
     print()
+    return ticket.ticket_type.value
 
 
 # --------------------------------------------------------------------------- main
@@ -226,7 +227,7 @@ def main(argv: list[str] | None = None, *, desk: Any = None, state: Any = None) 
         ticket_id = resolve_ticket_id(real_desk, args.ticket)
         print("MODE: LIVE — changes will be made\n" if args.live
               else "MODE: PREVIEW — nothing will be changed\n")
-        print_summary(real_desk, ticket_id)
+        ticket_type = print_summary(real_desk, ticket_id)
     except (TicketNotFound, ZohoAuthError) as exc:
         print(exc)
         return 2
@@ -256,6 +257,11 @@ def main(argv: list[str] | None = None, *, desk: Any = None, state: Any = None) 
         wrapped = PreviewDesk(real_desk)
         with preview_hooks():
             process_ticket(ticket_id, desk=wrapped, state=PreviewState(base_state))
+
+    if ticket_type == "other":
+        print("\nResult: not an onboarding/offboarding ticket — the agent leaves it alone "
+              "(no comment, no status change, no alert).")
+        return 0
 
     flagged = FLAG_STATUSES.intersection(wrapped.statuses)
     if flagged:
