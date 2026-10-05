@@ -206,9 +206,13 @@ def main(argv: list[str] | None = None, *, desk: Any = None, state: Any = None) 
 
     load_dotenv(ROOT / ".env")
 
+    from urllib.parse import urlparse
+
+    import requests
+
     from agent.orchestrator import process_ticket
     from lib.state import default_state
-    from lib.zoho import ZohoDeskClient
+    from lib.zoho import TicketNotFound, ZohoAuthError, ZohoDeskClient
 
     real_desk = desk or ZohoDeskClient()
     if desk is None and (real_desk._is_placeholder()
@@ -220,13 +224,20 @@ def main(argv: list[str] | None = None, *, desk: Any = None, state: Any = None) 
 
     try:
         ticket_id = resolve_ticket_id(real_desk, args.ticket)
-    except LookupError as exc:
+        print("MODE: LIVE — changes will be made\n" if args.live
+              else "MODE: PREVIEW — nothing will be changed\n")
+        print_summary(real_desk, ticket_id)
+    except (TicketNotFound, ZohoAuthError) as exc:
         print(exc)
         return 2
-
-    print("MODE: LIVE — changes will be made\n" if args.live
-          else "MODE: PREVIEW — nothing will be changed\n")
-    print_summary(real_desk, ticket_id)
+    except requests.HTTPError as exc:
+        # Status + URL path only: no query string, headers or body (they can carry secrets).
+        resp = exc.response
+        where = urlparse(resp.url).path if resp is not None else "?"
+        code = resp.status_code if resp is not None else "?"
+        print(f"Zoho Desk returned HTTP {code} for {where}. Check ZOHO_ORG_ID and "
+              "ZOHO_DESK_BASE_URL in .env, and that the ticket exists.")
+        return 2
 
     if args.live:
         wrapped = LiveDesk(real_desk)

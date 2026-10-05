@@ -16,12 +16,14 @@ class Resp:
         return self._data
 
 
-def test_exchange_and_list_orgs(monkeypatch, capsys):
+@pytest.fixture
+def zoho(monkeypatch, tmp_path):
+    """Fake Zoho endpoints; point the tool at a temp folder so the real .env is never touched."""
     seen = {}
 
     def fake_post(url, params=None, timeout=None):
         seen["post"] = (url, params)
-        return Resp({"access_token": "acc", "refresh_token": "ref-123"})
+        return Resp({"access_token": "acc", "refresh_token": "1000.refreshtokenvalue1234"})
 
     def fake_get(url, headers=None, timeout=None):
         seen["get"] = (url, headers)
@@ -29,22 +31,50 @@ def test_exchange_and_list_orgs(monkeypatch, capsys):
 
     monkeypatch.setattr(zoho_token.requests, "post", fake_post)
     monkeypatch.setattr(zoho_token.requests, "get", fake_get)
-    monkeypatch.setenv("ZOHO_CLIENT_ID", "cid")
-    monkeypatch.setenv("ZOHO_CLIENT_SECRET", "csecret")
+    monkeypatch.setattr(zoho_token, "ROOT", tmp_path)
+    monkeypatch.setenv("ZOHO_CLIENT_ID", "1000.cid")
+    monkeypatch.setenv("ZOHO_CLIENT_SECRET", "csecret-value")
+    return seen
 
+
+def test_saves_to_env_and_hides_secrets(zoho, tmp_path, capsys):
+    env = tmp_path / ".env"
+    env.write_text(
+        "# Zoho\n"
+        "ZOHO_CLIENT_ID=PLACEHOLDER_ZOHO_CLIENT_ID\n"
+        "ZOHO_REFRESH_TOKEN=PLACEHOLDER_REFRESH_TOKEN\n"
+        "# ZOHO_ORG_ID=commented-example\n"
+        "AZURE_TENANT_ID=keep-me\n"
+    )
     assert zoho_token.main(["--region", "eu", "--code", "1000.abc"]) == 0
 
-    url, params = seen["post"]
+    url, params = zoho["post"]
     assert url == "https://accounts.zoho.eu/oauth/v2/token"
-    assert params == {"grant_type": "authorization_code", "client_id": "cid",
-                      "client_secret": "csecret", "code": "1000.abc"}
-    assert seen["get"] == ("https://desk.zoho.eu/api/v1/organizations",
+    assert params == {"grant_type": "authorization_code", "client_id": "1000.cid",
+                      "client_secret": "csecret-value", "code": "1000.abc"}
+    assert zoho["get"] == ("https://desk.zoho.eu/api/v1/organizations",
                            {"Authorization": "Zoho-oauthtoken acc"})
+
+    saved = env.read_text().splitlines()
+    assert "ZOHO_REFRESH_TOKEN=1000.refreshtokenvalue1234" in saved
+    assert "ZOHO_CLIENT_ID=1000.cid" in saved
+    assert "ZOHO_CLIENT_SECRET=csecret-value" in saved
+    assert "ZOHO_ORG_ID=6000123" in saved
+    assert "ZOHO_DESK_BASE_URL=https://desk.zoho.eu" in saved
+    assert "AZURE_TENANT_ID=keep-me" in saved                 # other settings untouched
+    assert "# ZOHO_ORG_ID=commented-example" in saved         # comments untouched
+    assert sum(line.startswith("ZOHO_REFRESH_TOKEN=") for line in saved) == 1
+
     out = capsys.readouterr().out
-    assert "ZOHO_REFRESH_TOKEN=ref-123" in out
+    assert "refreshtokenvalue1234" not in out and "csecret-value" not in out
+    assert "ZOHO_REFRESH_TOKEN=1000.refr…1234" in out
     assert "ZOHO_ORG_ID=6000123" in out
-    assert "ZOHO_DESK_BASE_URL=https://desk.zoho.eu" in out
-    assert "csecret" not in out
+
+
+def test_print_mode_prints_and_writes_nothing(zoho, tmp_path, capsys):
+    assert zoho_token.main(["--code", "1000.abc", "--print"]) == 0
+    assert not (tmp_path / ".env").exists()
+    assert "ZOHO_REFRESH_TOKEN=1000.refreshtokenvalue1234" in capsys.readouterr().out
 
 
 def test_expired_code_gives_clear_message(monkeypatch):

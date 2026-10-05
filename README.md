@@ -361,7 +361,10 @@ and Secret in `.env` as `ZOHO_CLIENT_ID` / `ZOHO_CLIENT_SECRET`. "Generate Code"
 ```
 python tools/zoho_token.py --region com --code <the code>
 ```
-It prints `ZOHO_REFRESH_TOKEN`, `ZOHO_ORG_ID` and the regional URLs — paste them into `.env`.
+It saves `ZOHO_REFRESH_TOKEN`, `ZOHO_ORG_ID`, the regional URLs (and the Client ID / secret if
+you typed them in) straight into `.env`, showing the token only partly — so nothing secret
+appears on screen. If a token is ever exposed, delete the Self Client in the API console
+(that invalidates its tokens) and create a new one.
 
 **4. App registration in your tenant** (Entra admin centre → App registrations → New):
 add Microsoft Graph **application** permissions `User.ReadWrite.All`,

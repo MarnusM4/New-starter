@@ -37,6 +37,24 @@ from .retry import with_retries
 from .ticket import StarterDetails, Ticket, TicketType, split_person_name
 
 
+class ZohoAuthError(RuntimeError):
+    """Zoho refused our credentials. The message says why, never the secret values."""
+
+
+class TicketNotFound(Exception):
+    """No Desk ticket matches the given ticket number."""
+
+
+# Zoho reports token errors as HTTP 200 with an "error" code; explain the common ones.
+_TOKEN_ERROR_HINTS = {
+    "invalid_code": "the refresh token is invalid, expired or revoked — generate a new one "
+                    "with tools/zoho_token.py",
+    "invalid_client": "ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET don't match a Zoho client in this "
+                      "region — check both values and ZOHO_ACCOUNTS_URL",
+    "invalid_client_secret": "ZOHO_CLIENT_SECRET doesn't match ZOHO_CLIENT_ID",
+}
+
+
 class ZohoDeskClient:
     def __init__(self) -> None:
         # Pulled from env / Key Vault. See .env.example.
@@ -83,6 +101,10 @@ class ZohoDeskClient:
         )
         resp.raise_for_status()
         data = resp.json()
+        if "access_token" not in data:
+            code = str(data.get("error", "no access token in response"))
+            hint = _TOKEN_ERROR_HINTS.get(code, "check the ZOHO_* settings in .env")
+            raise ZohoAuthError(f"Zoho refused the refresh token ({code}): {hint}.")
         self._token = data["access_token"]
         # Refresh a minute early to avoid using a token that expires mid-request.
         self._token_expiry = time.time() + int(data.get("expires_in", 3600)) - 60
@@ -110,7 +132,7 @@ class ZohoDeskClient:
 
         matches = with_retries(call)
         if not matches:
-            raise LookupError(f"No Desk ticket with number #{number.lstrip('#')}")
+            raise TicketNotFound(f"No Desk ticket with number #{number.lstrip('#')}")
         return str(matches[0]["id"])
 
     def get_ticket_raw(self, ticket_id: str) -> dict[str, Any]:

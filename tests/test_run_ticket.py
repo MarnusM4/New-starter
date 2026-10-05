@@ -179,7 +179,9 @@ def test_hash_number_is_looked_up(forbid_side_effects, capsys):
 def test_unknown_number_exits_2(forbid_side_effects, capsys):
     class EmptyDesk(FakeDesk):
         def ticket_id_for_number(self, number):
-            raise LookupError("No Desk ticket with number #999")
+            from lib.zoho import TicketNotFound
+
+            raise TicketNotFound("No Desk ticket with number #999")
 
     assert run_ticket.main(["#999"], desk=EmptyDesk(_raw()), state=InMemoryState()) == 2
     assert "No Desk ticket with number #999" in capsys.readouterr().out
@@ -209,3 +211,50 @@ def test_zoho_ticket_id_for_number_request(monkeypatch):
     assert client.ticket_id_for_number("#101") == "1892000000123456"
     assert seen["req"] == (f"{client.base_url}/api/v1/tickets/search",
                            {"ticketNumber": "101", "limit": 1})
+
+
+# --------------------------------------------------------------------------- zoho auth errors
+
+
+@pytest.mark.parametrize("code,hint", [
+    ("invalid_code", "generate a new one"),
+    ("invalid_client", "ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET"),
+])
+def test_rejected_refresh_token_explains_why(monkeypatch, capsys, code, hint):
+    """Zoho answers HTTP 200 + {"error": ...}; the tool must say why, not just 'access_token'."""
+    from lib import zoho
+
+    class Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"error": code}
+
+    monkeypatch.setattr(zoho.requests, "post", lambda *a, **k: Resp())
+    for name, value in {"ZOHO_CLIENT_ID": "1000.cid", "ZOHO_CLIENT_SECRET": "sekrit-value",
+                        "ZOHO_REFRESH_TOKEN": "1000.refresh-value", "ZOHO_ORG_ID": "1"}.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(run_ticket, "ROOT", run_ticket.ROOT / "no-such-dir")  # no .env loaded
+
+    assert run_ticket.main(["#101"]) == 2
+    out = capsys.readouterr().out
+    assert f"Zoho refused the refresh token ({code})" in out
+    assert hint in out
+    assert "sekrit-value" not in out and "refresh-value" not in out
+
+
+def test_http_error_is_reported_without_secrets(monkeypatch, capsys):
+    import requests
+
+    class FailingDesk(FakeDesk):
+        def get_ticket_raw(self, ticket_id):
+            resp = requests.Response()
+            resp.status_code = 401
+            resp.url = "https://desk.zoho.com/api/v1/tickets/T1?secret=abc"
+            raise requests.HTTPError(response=resp)
+
+    assert run_ticket.main(["T1"], desk=FailingDesk(_raw()), state=InMemoryState()) == 2
+    out = capsys.readouterr().out
+    assert "HTTP 401 for /api/v1/tickets/T1" in out
+    assert "secret=abc" not in out
