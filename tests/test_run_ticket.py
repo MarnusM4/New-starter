@@ -258,3 +258,18 @@ def test_http_error_is_reported_without_secrets(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "HTTP 401 for /api/v1/tickets/T1" in out
     assert "secret=abc" not in out
+
+
+def test_search_403_explains_missing_scope(capsys):
+    import requests
+
+    class NoSearchDesk(FakeDesk):
+        def ticket_id_for_number(self, number):
+            resp = requests.Response()
+            resp.status_code = 403
+            resp.url = "https://desk.zoho.com/api/v1/tickets/search?ticketNumber=70051&limit=1"
+            raise requests.HTTPError(response=resp)
+
+    assert run_ticket.main(["#70051"], desk=NoSearchDesk(_raw()), state=InMemoryState()) == 2
+    out = capsys.readouterr().out
+    assert "Desk.search.READ" in out and "long id" in out

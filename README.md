@@ -357,7 +357,7 @@ copy .env.example .env           # macOS/Linux: cp .env.example .env
 **3. Zoho API access.** In the Zoho API console for your data centre
 (`api-console.zoho.com`, or `.eu` / `.in` / `.com.au`) add a **Self Client**; put its Client ID
 and Secret in `.env` as `ZOHO_CLIENT_ID` / `ZOHO_CLIENT_SECRET`. "Generate Code" with scope
-`Desk.tickets.ALL,Desk.basic.READ`, then straight away (codes expire in minutes):
+`Desk.tickets.ALL,Desk.search.READ,Desk.basic.READ`, then straight away (codes expire in minutes):
 ```
 python tools/zoho_token.py --region com --code <the code>
 ```

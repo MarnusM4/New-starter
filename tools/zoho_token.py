@@ -4,7 +4,7 @@
    .eu / .in / .com.au), add a client of type **Self Client**, and note its Client ID and
    Client Secret.
 2. In the Self Client, "Generate Code" with scope:
-       Desk.tickets.ALL,Desk.basic.READ
+       Desk.tickets.ALL,Desk.search.READ,Desk.basic.READ
    and a duration of 10 minutes. Copy the code (it expires quickly).
 3. Run:
        python tools/zoho_token.py --region com --code <the code>

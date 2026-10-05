@@ -235,8 +235,14 @@ def main(argv: list[str] | None = None, *, desk: Any = None, state: Any = None) 
         resp = exc.response
         where = urlparse(resp.url).path if resp is not None else "?"
         code = resp.status_code if resp is not None else "?"
-        print(f"Zoho Desk returned HTTP {code} for {where}. Check ZOHO_ORG_ID and "
-              "ZOHO_DESK_BASE_URL in .env, and that the ticket exists.")
+        if code == 403 and where.endswith("/tickets/search"):
+            print("Zoho Desk refused the ticket-number lookup (HTTP 403): the token is missing "
+                  "the Desk.search.READ scope. Either give the ticket's long id from its "
+                  "browser address instead of '#number', or make a new token with scope "
+                  "Desk.tickets.ALL,Desk.search.READ,Desk.basic.READ (tools/zoho_token.py).")
+        else:
+            print(f"Zoho Desk returned HTTP {code} for {where}. Check ZOHO_ORG_ID and "
+                  "ZOHO_DESK_BASE_URL in .env, and that the ticket exists.")
         return 2
 
     if args.live:
