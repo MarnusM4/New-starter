@@ -37,6 +37,24 @@ from .retry import with_retries
 from .ticket import StarterDetails, Ticket, TicketType, split_person_name
 
 
+class ZohoAuthError(RuntimeError):
+    """Zoho refused our credentials. The message says why, never the secret values."""
+
+
+class TicketNotFound(Exception):
+    """No Desk ticket matches the given ticket number."""
+
+
+# Zoho reports token errors as HTTP 200 with an "error" code; explain the common ones.
+_TOKEN_ERROR_HINTS = {
+    "invalid_code": "the refresh token is invalid, expired or revoked — generate a new one "
+                    "with tools/zoho_token.py",
+    "invalid_client": "ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET don't match a Zoho client in this "
+                      "region — check both values and ZOHO_ACCOUNTS_URL",
+    "invalid_client_secret": "ZOHO_CLIENT_SECRET doesn't match ZOHO_CLIENT_ID",
+}
+
+
 class ZohoDeskClient:
     def __init__(self) -> None:
         # Pulled from env / Key Vault. See .env.example.
@@ -83,6 +101,10 @@ class ZohoDeskClient:
         )
         resp.raise_for_status()
         data = resp.json()
+        if "access_token" not in data:
+            code = str(data.get("error", "no access token in response"))
+            hint = _TOKEN_ERROR_HINTS.get(code, "check the ZOHO_* settings in .env")
+            raise ZohoAuthError(f"Zoho refused the refresh token ({code}): {hint}.")
         self._token = data["access_token"]
         # Refresh a minute early to avoid using a token that expires mid-request.
         self._token_expiry = time.time() + int(data.get("expires_in", 3600)) - 60
@@ -110,7 +132,7 @@ class ZohoDeskClient:
 
         matches = with_retries(call)
         if not matches:
-            raise LookupError(f"No Desk ticket with number #{number.lstrip('#')}")
+            raise TicketNotFound(f"No Desk ticket with number #{number.lstrip('#')}")
         return str(matches[0]["id"])
 
     def get_ticket_raw(self, ticket_id: str) -> dict[str, Any]:
@@ -186,7 +208,13 @@ class ZohoDeskClient:
             labels.update(config.field_labels or {})
         fields = parse_summary(body, labels)
 
-        ticket_type = classify_subject(str(raw.get("subject", "")), config)
+        subject = str(raw.get("subject", ""))
+        ticket_type = classify_subject(subject, config)
+        if ticket_type is TicketType.UNKNOWN and not mentions_starter_or_leaver(subject, config) \
+                and not any(fields.get(f) for f in FORM_SIGNAL_FIELDS):
+            # Nothing about this ticket says onboarding/offboarding: an ordinary support
+            # ticket. Leave it completely alone rather than flag it.
+            ticket_type = TicketType.OTHER
 
         starter = None
         if ticket_type is TicketType.STARTER:
@@ -378,19 +406,33 @@ def _mentions(subject: str, keyword: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", subject.lower()) is not None
 
 
-def classify_subject(subject: str, config: ClientConfig | None = None) -> TicketType:
-    """STARTER / LEAVER when the subject clearly says so; UNKNOWN when neither or both match.
+# Fields only an onboarding form summary carries. If any is present the ticket is a form,
+# even when its subject is unclear (then it's flagged, not ignored).
+FORM_SIGNAL_FIELDS: tuple[str, ...] = ("new_starter_name", "ns_email", "start_date")
 
-    UNKNOWN is flagged for a technician — an unclear ticket never creates an account.
-    """
+
+def _subject_signals(subject: str, config: ClientConfig | None) -> tuple[bool, bool]:
+    """(mentions a starter keyword, mentions a leaver keyword)."""
     starter_kw = list(DEFAULT_STARTER_KEYWORDS)
     leaver_kw = list(DEFAULT_LEAVER_KEYWORDS)
     if config is not None:
         starter_kw += list(config.starter_subject_keywords or [])
         leaver_kw += list(config.leaver_subject_keywords or [])
+    return (any(_mentions(subject, k) for k in starter_kw),
+            any(_mentions(subject, k) for k in leaver_kw))
 
-    is_starter = any(_mentions(subject, k) for k in starter_kw)
-    is_leaver = any(_mentions(subject, k) for k in leaver_kw)
+
+def mentions_starter_or_leaver(subject: str, config: ClientConfig | None = None) -> bool:
+    return any(_subject_signals(subject, config))
+
+
+def classify_subject(subject: str, config: ClientConfig | None = None) -> TicketType:
+    """STARTER / LEAVER when the subject clearly says so; UNKNOWN when neither or both match.
+
+    UNKNOWN is flagged for a technician — an unclear ticket never creates an account.
+    (parse_ticket narrows UNKNOWN to OTHER for tickets that aren't onboarding forms at all.)
+    """
+    is_starter, is_leaver = _subject_signals(subject, config)
     if is_starter and not is_leaver:
         return TicketType.STARTER
     if is_leaver and not is_starter:

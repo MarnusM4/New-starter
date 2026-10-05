@@ -76,6 +76,10 @@ class TicketType(str, Enum):
     # Subject didn't clearly say starter or leaver (neither or both matched) -> a human
     # decides; nothing is provisioned on a guess.
     UNKNOWN = "unknown"
+    # Not an onboarding/offboarding request at all (an ordinary support ticket): no
+    # starter/leaver wording in the subject and no form summary in the body. Left alone —
+    # no comment, no status change, no alert.
+    OTHER = "other"
 
 
 class StarterDetails(BaseModel):

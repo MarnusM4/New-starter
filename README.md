@@ -132,6 +132,13 @@ offboarding, leaver, exit, termination, departure. A client with other wording a
 `starter_subject_keywords` / `leaver_subject_keywords` to its file. A subject that matches
 **neither or both** is flagged for a technician; it never creates an account.
 
+**Ordinary support tickets are left alone.** A ticket with no starter/leaver wording in its
+subject **and** no form summary in its body (no "New Starter's Name", NS email or start
+date) isn't an onboarding request at all: the agent does nothing to it — no comment, no
+status change, no alert. Only tickets that are clearly forms but can't be classified get
+flagged. The Desk workflow that triggers the agent should still only fire for
+onboarding/offboarding subjects; this is the safety net.
+
 ### Flagging & alerts
 
 When the agent can't safely act (client not identified or ambiguous, starter/leaver unclear,
@@ -357,11 +364,14 @@ copy .env.example .env           # macOS/Linux: cp .env.example .env
 **3. Zoho API access.** In the Zoho API console for your data centre
 (`api-console.zoho.com`, or `.eu` / `.in` / `.com.au`) add a **Self Client**; put its Client ID
 and Secret in `.env` as `ZOHO_CLIENT_ID` / `ZOHO_CLIENT_SECRET`. "Generate Code" with scope
-`Desk.tickets.ALL,Desk.basic.READ`, then straight away (codes expire in minutes):
+`Desk.tickets.ALL,Desk.search.READ,Desk.basic.READ`, then straight away (codes expire in minutes):
 ```
 python tools/zoho_token.py --region com --code <the code>
 ```
-It prints `ZOHO_REFRESH_TOKEN`, `ZOHO_ORG_ID` and the regional URLs — paste them into `.env`.
+It saves `ZOHO_REFRESH_TOKEN`, `ZOHO_ORG_ID`, the regional URLs (and the Client ID / secret if
+you typed them in) straight into `.env`, showing the token only partly — so nothing secret
+appears on screen. If a token is ever exposed, delete the Self Client in the API console
+(that invalidates its tokens) and create a new one.
 
 **4. App registration in your tenant** (Entra admin centre → App registrations → New):
 add Microsoft Graph **application** permissions `User.ReadWrite.All`,

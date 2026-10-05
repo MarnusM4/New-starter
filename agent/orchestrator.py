@@ -156,6 +156,12 @@ def process_ticket(
     audit("ticket.parsed", ticket_id, run_id=run_id,
           client_id=ticket.client_id, type=ticket.ticket_type.value)
 
+    if ticket.ticket_type is TicketType.OTHER:
+        # An ordinary support ticket, not an onboarding/offboarding request: leave it alone —
+        # no comment, no status change, no alert.
+        audit("ticket.ignored_not_starter_leaver", ticket_id, run_id=run_id)
+        return None
+
     if ticket.ticket_type is TicketType.UNKNOWN:
         # The subject didn't clearly say starter or leaver — never provision on a guess.
         audit("ticket.type_unknown", ticket_id, run_id=run_id)

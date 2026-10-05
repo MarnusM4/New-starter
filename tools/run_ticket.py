@@ -158,8 +158,8 @@ def preview_hooks() -> Iterator[None]:
 # --------------------------------------------------------------------------- summary
 
 
-def print_summary(desk: Any, ticket_id: str) -> None:
-    """What the agent read off the ticket, before it decides anything."""
+def print_summary(desk: Any, ticket_id: str) -> str | None:
+    """What the agent read off the ticket, before it decides anything. Returns its type."""
     from agent.provision import is_approved
 
     raw = desk.get_ticket_raw(ticket_id)
@@ -170,7 +170,7 @@ def print_summary(desk: Any, ticket_id: str) -> None:
         ticket = desk.parse_ticket(raw)
     except Exception as exc:  # noqa: BLE001 - shown, then the run reports the flag
         print(f"Parse:     FAILED — {' '.join(str(exc).split())[:300]}")
-        return
+        return None
     print(f"Client:    {ticket.client_id}")
     print(f"Type:      {ticket.ticket_type.value}")
     if ticket.starter:
@@ -178,6 +178,7 @@ def print_summary(desk: Any, ticket_id: str) -> None:
             if value:
                 print(f"  {name}: {value}")
     print()
+    return ticket.ticket_type.value
 
 
 # --------------------------------------------------------------------------- main
@@ -206,9 +207,13 @@ def main(argv: list[str] | None = None, *, desk: Any = None, state: Any = None) 
 
     load_dotenv(ROOT / ".env")
 
+    from urllib.parse import urlparse
+
+    import requests
+
     from agent.orchestrator import process_ticket
     from lib.state import default_state
-    from lib.zoho import ZohoDeskClient
+    from lib.zoho import TicketNotFound, ZohoAuthError, ZohoDeskClient
 
     real_desk = desk or ZohoDeskClient()
     if desk is None and (real_desk._is_placeholder()
@@ -220,13 +225,26 @@ def main(argv: list[str] | None = None, *, desk: Any = None, state: Any = None) 
 
     try:
         ticket_id = resolve_ticket_id(real_desk, args.ticket)
-    except LookupError as exc:
+        print("MODE: LIVE — changes will be made\n" if args.live
+              else "MODE: PREVIEW — nothing will be changed\n")
+        ticket_type = print_summary(real_desk, ticket_id)
+    except (TicketNotFound, ZohoAuthError) as exc:
         print(exc)
         return 2
-
-    print("MODE: LIVE — changes will be made\n" if args.live
-          else "MODE: PREVIEW — nothing will be changed\n")
-    print_summary(real_desk, ticket_id)
+    except requests.HTTPError as exc:
+        # Status + URL path only: no query string, headers or body (they can carry secrets).
+        resp = exc.response
+        where = urlparse(resp.url).path if resp is not None else "?"
+        code = resp.status_code if resp is not None else "?"
+        if code == 403 and where.endswith("/tickets/search"):
+            print("Zoho Desk refused the ticket-number lookup (HTTP 403): the token is missing "
+                  "the Desk.search.READ scope. Either give the ticket's long id from its "
+                  "browser address instead of '#number', or make a new token with scope "
+                  "Desk.tickets.ALL,Desk.search.READ,Desk.basic.READ (tools/zoho_token.py).")
+        else:
+            print(f"Zoho Desk returned HTTP {code} for {where}. Check ZOHO_ORG_ID and "
+                  "ZOHO_DESK_BASE_URL in .env, and that the ticket exists.")
+        return 2
 
     if args.live:
         wrapped = LiveDesk(real_desk)
@@ -239,6 +257,11 @@ def main(argv: list[str] | None = None, *, desk: Any = None, state: Any = None) 
         wrapped = PreviewDesk(real_desk)
         with preview_hooks():
             process_ticket(ticket_id, desk=wrapped, state=PreviewState(base_state))
+
+    if ticket_type == "other":
+        print("\nResult: not an onboarding/offboarding ticket — the agent leaves it alone "
+              "(no comment, no status change, no alert).")
+        return 0
 
     flagged = FLAG_STATUSES.intersection(wrapped.statuses)
     if flagged:

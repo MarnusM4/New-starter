@@ -213,3 +213,30 @@ def test_per_client_extra_keyword():
     cfg = load_client("example-entra").model_copy(update={"starter_subject_keywords": ["it request"]})
     assert classify_subject("IT Request - Paula", cfg) is TicketType.STARTER
     assert classify_subject("IT Request - Paula") is TicketType.UNKNOWN
+
+
+# --------------------------------------------------------------------------- ordinary tickets
+
+
+def _parse(subject, body):
+    return ZohoDeskClient().parse_ticket({"id": "1", "subject": subject, "description": body})
+
+
+def test_ordinary_support_ticket_is_other():
+    # The real case: a phone-fault ticket with no form summary and no starter/leaver wording.
+    ticket = _parse(
+        "Good Morning Please note 1307 is still doing the same thing, when you call it it "
+        "rings once and then goes to voice mail",
+        "Hi, extension 1307 still rings once then voicemail. Thanks, Mellissa",
+    )
+    assert ticket.ticket_type is TicketType.OTHER
+    assert ticket.starter is None
+
+
+def test_form_with_unclear_subject_is_still_flagged_not_ignored():
+    ticket = _parse("Request from Portland", "New Starter's Name : Ms., Ada, Lovelace\n")
+    assert ticket.ticket_type is TicketType.UNKNOWN
+
+
+def test_subject_with_both_keywords_is_flagged_even_without_form():
+    assert _parse("New user / leaver", "please sort").ticket_type is TicketType.UNKNOWN
