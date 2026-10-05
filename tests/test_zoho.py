@@ -96,12 +96,12 @@ def test_leaver_subject_classifies_as_leaver():
 
 
 def test_per_client_field_labels_override(monkeypatch):
-    cfg = load_client("example-entra").model_copy(update={"field_labels": {"job_title": "Position"}})
+    cfg = load_client("example-entra").model_copy(update={"field_labels": {"job_title": "Role Title"}})
     monkeypatch.setattr(zoho, "resolve_config", lambda key: cfg)
     body = (
         "Company's Name : example-entra\n"
         "New Starter's Name : Ada, Lovelace\n"
-        "Position : Analyst\n"
+        "Role Title : Analyst\n"
     )
     ticket = ZohoDeskClient().parse_ticket(_raw(body=body))
     assert ticket.starter.job_title == "Analyst"
@@ -111,6 +111,41 @@ def test_split_person_name_variants():
     assert split_person_name("Ms., Paula, Potgieter") == ("Ms.", "Paula", "Potgieter")
     assert split_person_name("Paula, Potgieter") == (None, "Paula", "Potgieter")
     assert split_person_name("Paula Potgieter") == (None, "Paula", "Potgieter")
+    # Free-text "Name & Surname": everything after the first word is the surname.
+    assert split_person_name("Marnus van den Heever") == (None, "Marnus", "van den Heever")
+    assert split_person_name("Mr Raymond Young") == ("Mr", "Raymond", "Young")
+    assert split_person_name("Dr., Jan, du Plessis") == ("Dr.", "Jan", "du Plessis")
+    assert split_person_name("Ada") == (None, "Ada", "")
+
+
+def test_family_wealth_form_parses_without_client_setup():
+    from tests.test_run_ticket import FAMILY_WEALTH
+
+    raw = _raw(body=FAMILY_WEALTH, subject="Family Wealth New User Onboarding Form - Raymond Young")
+    ticket = ZohoDeskClient().parse_ticket(raw)
+    assert ticket.ticket_type is TicketType.STARTER
+    assert (ticket.starter.first_name, ticket.starter.last_name) == ("Raymond", "Young")
+    assert ticket.starter.desired_username == "raymond.young"
+    assert ticket.starter.start_date == "01-Nov-2026"
+    assert ticket.starter.job_title == "Financial Planner"
+
+
+def test_label_matching_is_tolerant():
+    body = "new user\u2019s name and surname : Ada Lovelace\nJOB TITLE: Analyst\n"
+    out = parse_summary(body, {"new_starter_name": DEFAULT_FIELD_LABELS["new_starter_name"],
+                               "job_title": DEFAULT_FIELD_LABELS["job_title"]})
+    assert out == {"new_starter_name": "Ada Lovelace", "job_title": "Analyst"}
+
+
+def test_multiword_surname_username():
+    from agent.orchestrator import build_plan
+    from lib.config import load_client
+
+    body = "Company's Name : example-entra\nNew Users Name & Surname : Marnus van den Heever\n"
+    ticket = ZohoDeskClient().parse_ticket(_raw(body=body, subject="New User Onboarding"))
+    plan = build_plan(ticket, load_client("example-entra"))
+    assert plan.username == "marnus.vandenheever"
+    assert plan.display_name == "Marnus van den Heever"
 
 
 def test_parse_summary_only_reads_whitelisted_labels():

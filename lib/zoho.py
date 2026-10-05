@@ -203,10 +203,7 @@ class ZohoDeskClient:
         except UnknownClientError as exc:
             client_id = _unidentified_marker(company, body, exc)
 
-        labels = dict(DEFAULT_FIELD_LABELS)
-        if config is not None:
-            labels.update(config.field_labels or {})
-        fields = parse_summary(body, labels)
+        fields = parse_summary(body, labels_for(config))
 
         subject = str(raw.get("subject", ""))
         ticket_type = classify_subject(subject, config)
@@ -297,20 +294,58 @@ class ZohoDeskClient:
 
 # --------------------------------------------------------------------------- intake parsing
 #
-# Canonical starter field -> the Flawless form's label text in the ${zf:ALL_FIELDS} summary.
-# A client whose form uses different labels overrides these via `field_labels:` in
-# clients/<client>.yaml (merged over these defaults). TODO: confirm the exact label strings
-# (incl. the manager field, not visible in the sample) against a live ticket.
-DEFAULT_FIELD_LABELS: dict[str, str] = {
-    "company": "Company's Name",
-    "new_starter_name": "New Starter's Name",
-    "ns_email": "New Starter's NS Email Address",
-    "job_title": "Job Title",
-    "department": "Department",
-    "country": "Country",
-    "start_date": "Start Date",
-    "manager_email": "Manager's Email",  # TODO: confirm real label
+# Canonical starter field -> the wordings client forms use for that question in the
+# ${zf:ALL_FIELDS} summary. Each client's form words things differently, so every field
+# accepts several labels; matching ignores case, apostrophes, "&" vs "and" and a trailing
+# "?" (see norm_label). A client with unusual wording adds labels via `field_labels:` in its
+# clients/<client>.yaml (tried before these). TODO: the manager question's label.
+DEFAULT_FIELD_LABELS: dict[str, tuple[str, ...]] = {
+    "company": ("Company's Name", "Company Name", "Company"),
+    "new_starter_name": (
+        "New Starter's Name",                 # Natural Selection
+        "New Users Name & Surname",           # Family Wealth
+        "New User Name & Surname",
+        "New User Name",
+        "New Employee Name",
+        "New Employee Name & Surname",
+    ),
+    "ns_email": (
+        "New Starter's NS Email Address",     # Natural Selection
+        "New Users Email Address",            # Family Wealth
+        "New User Email Address",
+        "New Starter's Email Address",
+        "New Employee Email Address",
+    ),
+    "job_title": ("Job Title", "Position"),
+    "department": ("Department",),
+    "country": ("Country",),
+    "start_date": (
+        "Start Date",                         # Natural Selection
+        "New Users Starting Date",            # Family Wealth ("...Starting Date?")
+        "New User Starting Date",
+        "Starting Date",
+        "New Starter's Start Date",
+    ),
+    "manager_email": ("Manager's Email",),    # TODO: confirm real label
 }
+
+
+def norm_label(label: str) -> str:
+    """Normalise a question label for matching: case, apostrophes, '&', spaces, trailing ?:."""
+    s = label.lower()
+    s = re.sub(r"['\u2019`]", "", s)
+    s = s.replace("&", " and ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s.rstrip("?:. ").strip()
+
+
+def labels_for(config: ClientConfig | None = None) -> dict[str, tuple[str, ...]]:
+    """DEFAULT_FIELD_LABELS with the client's own `field_labels` tried first."""
+    labels = dict(DEFAULT_FIELD_LABELS)
+    for canon, extra in ((config.field_labels if config else None) or {}).items():
+        extras = (extra,) if isinstance(extra, str) else tuple(extra)
+        labels[canon] = extras + labels.get(canon, ())
+    return labels
 
 
 def _html_to_text(s: str) -> str:
@@ -330,41 +365,46 @@ def _html_to_text(s: str) -> str:
     return s
 
 
-def _extract_one(body: str, label: str) -> str | None:
-    """Pull a single `Label : Value` off its own line (case-insensitive). None if absent."""
-    flat = _html_to_text(body)
-    m = re.search(
-        rf"^[ \t]*{re.escape(label)}[ \t]*:[ \t]*(.*\S)[ \t]*$",
-        flat,
-        re.IGNORECASE | re.MULTILINE,
-    )
-    return m.group(1).strip() if m else None
+# A "Label : Value" line: a short label (no colon), then the answer (which may be empty).
+_LABEL_LINE = re.compile(r"^[ \t]*([^:\n]{2,100}?)[ \t]*:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
 
 
-def parse_summary(body: str, labels: dict[str, str]) -> dict[str, str]:
+def summary_pairs(body: str) -> list[tuple[str, str]]:
+    """Every `Label : Value` line in the body, in order. Lines that are really URLs
+    ("See https://...") are skipped."""
+    pairs: list[tuple[str, str]] = []
+    for m in _LABEL_LINE.finditer(_html_to_text(body)):
+        label, value = " ".join(m.group(1).split()), m.group(2).strip()
+        if label.lower().startswith(("http", "www")) or value.startswith("//"):
+            continue
+        pairs.append((label, value))
+    return pairs
+
+
+def parse_summary(body: str, labels: dict[str, str | tuple[str, ...]]) -> dict[str, str]:
     """Extract the whitelisted labelled values from the form-summary body.
 
-    Only the given labels are read; any other content in the (untrusted) body is ignored.
-    Returns a dict keyed by canonical field name.
+    `labels` maps canonical field -> one label or several accepted labels. Only those labels
+    are read; any other content in the (untrusted) body is ignored. The first non-empty
+    answer for a label wins. Returns a dict keyed by canonical field name.
     """
+    answers: dict[str, str] = {}
+    for label, value in summary_pairs(body):
+        if value:
+            answers.setdefault(norm_label(label), value)
     out: dict[str, str] = {}
-    for canon, label in labels.items():
-        val = _extract_one(body, label)
-        if val:
-            out[canon] = val
+    for canon, accepted in labels.items():
+        for label in ((accepted,) if isinstance(accepted, str) else accepted):
+            value = answers.get(norm_label(label))
+            if value:
+                out[canon] = value
+                break
     return out
 
 
-# Forms word the company question differently; this is only one clue among several.
-COMPANY_LABELS: tuple[str, ...] = ("Company's Name", "Company Name", "Company")
-
-
 def _extract_company(body: str) -> str | None:
-    for label in COMPANY_LABELS:
-        value = _extract_one(body, label)
-        if value:
-            return value
-    return None
+    """The company answer, when the form asks for it (only one clue among several)."""
+    return parse_summary(body, {"company": DEFAULT_FIELD_LABELS["company"]}).get("company")
 
 
 def _unidentified_marker(company: str | None, body: str, exc: Exception) -> str:
