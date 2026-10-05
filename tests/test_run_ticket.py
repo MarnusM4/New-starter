@@ -361,3 +361,15 @@ def test_show_labels_maps_family_wealth_wordings(forbid_side_effects, capsys):
     assert "New Users Email Address  -> used as ns_email" in out
     assert "New Users Starting Date?  -> used as start_date" in out
     assert "Raymond" not in out and "Young" not in out
+
+
+def test_show_labels_masks_layout_when_nothing_found(forbid_side_effects, capsys):
+    body = "<p>New Starter Name</p><p>Paula Potgieter</p><p>Phone 0820001234</p>"
+    code = run_ticket.main(["T1", "--show-labels"], desk=FakeDesk(_raw(description=body)),
+                           state=InMemoryState())
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "No 'Label : Value' lines found" in out
+    assert "| Aaa Aaaaaaa Aaaa" in out and "| Aaaaa Aaaaaaaaa" in out
+    for secret in ("Paula", "Potgieter", "0820001234"):   # body content, never shown
+        assert secret not in out

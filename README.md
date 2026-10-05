@@ -417,7 +417,9 @@ and plan. Exit code 1 means a live run would flag it, and the output says why.
 To check a client's form labels, run `python tools/run_ticket.py "#<number>" --show-labels`
 on one of their real onboarding tickets. It lists every question label on the form, marks
 the ones the agent uses, and lists the ones it expected but didn't find — **answers are never
-shown**, so the output is safe to share. A question that isn't matched (no `-> used as`)
+shown**, so the output is safe to share. If it finds no labels at all, it prints the
+description's layout with every letter and digit masked (`Aaaa Aaaa : 99-Aaa-9999`), which
+shows why without revealing anything. A question that isn't matched (no `-> used as`)
 but should be goes in that client's `field_labels`, or in `DEFAULT_FIELD_LABELS` if it's
 general wording.
 

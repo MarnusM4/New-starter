@@ -348,20 +348,48 @@ def labels_for(config: ClientConfig | None = None) -> dict[str, tuple[str, ...]]
     return labels
 
 
+# Innermost table rows (no nested <tr> inside) and their cells.
+_INNER_ROW = re.compile(r"(?is)<tr\b[^>]*>((?:(?!<tr\b).)*?)</tr\s*>")
+_CELL = re.compile(r"(?is)<t[dh]\b[^>]*>(.*?)</t[dh]\s*>")
+
+
+def _cell_text(cell: str) -> str:
+    """A table cell's text on one line: tags dropped, entities decoded, spaces collapsed."""
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", cell)).split())
+
+
+def _row_to_line(match: re.Match) -> str:
+    """One table row -> one `Label : Value` line, however the cells are formatted.
+
+    Zoho's summary is a table of label / ":" / answer cells. Outlook forwards rebuild it
+    with every cell's text in its own <p>, so cell boundaries must not become line breaks.
+    """
+    cells = [_cell_text(c) for c in _CELL.findall(match.group(1))]
+    cells = [c for c in cells if c and c != ":"]
+    if not cells:
+        return "\n"
+    if len(cells) == 1:
+        return f"\n{cells[0]}\n"
+    label = cells[0].rstrip(":").strip()
+    value = " ".join(c.lstrip(":").strip() for c in cells[1:]).strip()
+    return f"\n{label} : {value}\n"
+
+
 def _html_to_text(s: str) -> str:
     """Best-effort HTML → text so a `Label : Value` block survives on one line per field.
 
-    Desk may store the email body as HTML. Turn row/line boundaries into newlines and cell
-    boundaries into a ' : ' separator, drop remaining tags, unescape entities, and collapse
-    any doubled separators. Plain-text bodies pass through unchanged.
+    Desk may store the email body as HTML — Zoho's own table, or Outlook's rebuilt copy when
+    a client forwards the form. Each innermost table row becomes one line (label, then the
+    answer); everything else — outer layout tables, paragraphs, line breaks — becomes line
+    breaks. Entities are decoded. Plain-text bodies pass through unchanged.
     """
     if "<" in s and ">" in s:
+        s = _INNER_ROW.sub(_row_to_line, s)
         s = re.sub(r"(?i)<br\s*/?>", "\n", s)
-        s = re.sub(r"(?i)</(tr|p|div|li|h[1-6])\s*>", "\n", s)
-        s = re.sub(r"(?i)</td>\s*<td[^>]*>", " : ", s)
+        s = re.sub(r"(?i)</(tr|td|th|p|div|li|h[1-6])\s*>", "\n", s)
         s = re.sub(r"<[^>]+>", "", s)
     s = html.unescape(s)
-    s = re.sub(r"[ \t]*:[ \t]*:[ \t]*", " : ", s)  # collapse a doubled colon from cell joins
+    s = re.sub(r"[ \t]*:[ \t]*:[ \t]*", " : ", s)  # collapse a doubled colon
     return s
 
 

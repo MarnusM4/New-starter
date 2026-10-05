@@ -179,3 +179,35 @@ def test_desk_status_defaults_and_env_override(monkeypatch):
     assert desk_status_name(STATUS_FAILED) == "Automation Failed"
     monkeypatch.setenv("ZOHO_STATUS_NEEDS_ATTENTION", "Escalated - Automation")
     assert desk_status_name(STATUS_NEEDS_ATTENTION) == "Escalated - Automation"
+
+
+# Natural Selection's form as the client forwards it from Outlook: the summary table is
+# rebuilt with every cell's text in its own <p>, nested inside a layout table.
+OUTLOOK_FORWARD = """
+<div><p>From: Quinton Miller<br>Subject: Natural Selection New Starter - Paula Potgieter</p></div>
+<table class="MsoNormalTable"><tr><td>
+ <p class="MsoNormal">Please find attached the New Starter Form for: Paula Potgieter</p>
+ <table class="MsoNormalTable" cellpadding="0">
+  <tr><td><p class="MsoNormal"><span>Your name</span></p></td>
+      <td><p class="MsoNormal"><span>:</span></p></td>
+      <td><p class="MsoNormal"><span>Quinton, Miller</span></p></td></tr>
+  <tr><td><p class="MsoNormal">New Starter&#8217;s Name</p></td><td><p>:</p></td>
+      <td><p class="MsoNormal">Ms., Paula, Potgieter</p></td></tr>
+  <tr><td><p>New Starter&#8217;s NS Email Address</p></td><td><p>:</p></td>
+      <td><p><a href="mailto:paulap@naturalselection.travel">paulap@naturalselection.travel</a></p></td></tr>
+  <tr><td><p>Job Title</p></td><td><p>:</p></td><td><p>Digital <b>Marketing</b><br>Manager</p></td></tr>
+  <tr><td><p>Start Date:</p></td><td><p>29-Sep-2026</p></td></tr>
+ </table>
+</td></tr></table>
+"""
+
+
+def test_outlook_forwarded_form_parses():
+    raw = _raw(body=OUTLOOK_FORWARD,
+               subject="Fw: Natural Selection New Starter - Paula Potgieter - APPROVAL NEEDED")
+    ticket = ZohoDeskClient().parse_ticket(raw)
+    assert ticket.ticket_type is TicketType.STARTER
+    assert (ticket.starter.first_name, ticket.starter.last_name) == ("Paula", "Potgieter")
+    assert ticket.starter.desired_username == "paulap"
+    assert ticket.starter.job_title == "Digital Marketing Manager"   # multi-line cell joined
+    assert ticket.starter.start_date == "29-Sep-2026"                # 2-column row, "Label:"
