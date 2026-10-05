@@ -136,8 +136,13 @@ offboarding, leaver, exit, termination, departure. A client with other wording a
 subject **and** no form summary in its body (no "New Starter's Name", NS email or start
 date) isn't an onboarding request at all: the agent does nothing to it — no comment, no
 status change, no alert. Only tickets that are clearly forms but can't be classified get
-flagged. The Desk workflow that triggers the agent should still only fire for
-onboarding/offboarding subjects; this is the safety net.
+flagged. **Leaver tickets** are also left alone (audit only) until the leaver process is
+built.
+
+The Desk workflow that triggers the agent should only fire for tickets **sent by Zoho
+Forms** (filter on the sender address of the form notification emails), not on subject
+words alone — e.g. an internal ticket titled "New Starter Form Edits" mentions "new starter"
+but isn't a request, and would otherwise be flagged. The rule above is the safety net.
 
 ### Flagging & alerts
 
@@ -398,6 +403,11 @@ with a subject such as "New Starter IT Form".
 
 **7. Preview** — `python tools/run_ticket.py "#<number>"`. Check the client, name, username
 and plan. Exit code 1 means a live run would flag it, and the output says why.
+
+To check a client's form labels, run `python tools/run_ticket.py "#<number>" --show-labels`
+on one of their real onboarding tickets. It lists every question label on the form, marks
+the ones the agent uses, and lists the ones it expected but didn't find — **answers are never
+shown**, so the output is safe to share. Missing ones go in that client's `field_labels`.
 
 **8. Live, step by step.**
 1. `python tools/run_ticket.py "#<number>" --live` → the plan is posted as an internal

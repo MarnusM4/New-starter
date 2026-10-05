@@ -178,9 +178,9 @@ def process_ticket(
         return None
 
     if ticket.ticket_type is not TicketType.STARTER:
-        # Leaver handling arrives in Phase E.
+        # Leaver handling arrives in Phase E. Until then leave leaver tickets alone (audit
+        # only) — a "not automated" comment on every leaver ticket is just noise.
         audit("ticket.skipped_non_starter", ticket_id, run_id=run_id, type=ticket.ticket_type.value)
-        desk.post_note(ticket_id, "Leaver tickets are not automated yet (Phase E).")
         return None
 
     if state.is_done(provisioned_key(ticket_id)):
