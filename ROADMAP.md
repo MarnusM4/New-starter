@@ -148,9 +148,16 @@ real tenants:
    placeholder fields.
 5. **Real Zoho Desk field labels + status names** — confirm each client form's labels
    (`DEFAULT_FIELD_LABELS` / per-client `field_labels`), any subject wording outside the
-   default keywords, and create the Desk statuses named in `STATUS_NAME_MAP` (or override via `ZOHO_STATUS_*`).
-   Grant `Domain.Read.All` in each client tenant so client domains are discovered.
-6. **Create the Teams Workflows webhook + Desk statuses** — set `TEAMS_WEBHOOK_URL` and
-   `ZOHO_DESK_TICKET_URL`, create the four custom statuses in Desk, and test a flagged ticket.
-7. **Local-AD post-sync licensing** — after AD Connect sync, apply Entra licensing/cloud
+   default keywords. Grant `Domain.Read.All` in each client tenant so client domains are
+   discovered. (Desk statuses: created.)
+6. **Personal-tenant test** — run a real ticket end to end against your own Microsoft
+   tenant with `tools/run_ticket.py` (preview, then `--live`) before any client tenant. See
+   README "Testing on your own tenant first". Desk statuses: done.
+7. **Create the Teams Workflows webhook** — set `TEAMS_WEBHOOK_URL` and
+   `ZOHO_DESK_TICKET_URL`, and test a flagged ticket.
+8. **Temporary password hand-over** — the Entra path generates a temporary password but
+   doesn't record or deliver it yet; decide how new users / managers receive it.
+9. **Approver identity from Desk** — approval is the *Approved* status, but the approver
+   isn't read from Desk yet, so the self-approval (separation of duties) check can't fire.
+10. **Local-AD post-sync licensing** — after AD Connect sync, apply Entra licensing/cloud
    groups for `local_ad` clients (currently noted as pending-sync only).

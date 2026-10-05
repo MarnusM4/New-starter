@@ -5,6 +5,8 @@
 audit.log
 state.json
 local.settings.json
+# Personal / test tenant client configs stay on your machine
+clients/test-*.yaml
 
 # Python
 __pycache__/
