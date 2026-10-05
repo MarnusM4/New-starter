@@ -283,3 +283,56 @@ def test_preview_ordinary_ticket_says_left_alone(forbid_side_effects, capsys):
     assert "Type:      other" in out
     assert "leaves it alone" in out
     assert "would set" not in out and "would post" not in out and "Teams" not in out
+
+
+# --------------------------------------------------------------------------- --show-labels
+
+
+FORM = (
+    "Please review the new onboarding request and forward changes to helpdesk@flawlessit.co.za\n"
+    "Company's Name : example-entra\n"
+    "Your name : Quinton, Miller\n"
+    "New Starter's Name : Ms., Paula, Potgieter\n"
+    "Job Title : Digital Marketing Manager\n"
+    "Printer : \n"
+    "See https://www.flawlessit.co.za/x\n"
+)
+
+
+def test_show_labels_lists_labels_never_answers(forbid_side_effects, capsys):
+    desk = FakeDesk(_raw(description=FORM))
+    assert run_ticket.main(["T1", "--show-labels"], desk=desk, state=InMemoryState()) == 0
+    out = capsys.readouterr().out
+    assert "Client:    example-entra" in out
+    assert "[answered]  New Starter's Name  -> used as new_starter_name" in out
+    assert "[answered]  Job Title  -> used as job_title" in out
+    assert "[empty]     Printer" in out
+    assert "Your name" in out
+    assert "Expected but not found" in out and 'start_date: "Start Date"' in out
+    # No answers and no URL lines leak into the output.
+    for secret in ("Paula", "Potgieter", "Quinton", "Digital Marketing", "https"):
+        assert secret not in out
+    assert desk.notes == [] and desk.statuses == []
+
+
+def test_show_labels_reads_html_two_column_layout(forbid_side_effects, capsys):
+    html = ("<table><tr><td>New Starter's Name</td><td>:</td><td>Ms., Ada, Lovelace</td></tr>"
+            "<tr><td>Start Date</td><td>:</td><td>29-Sep-2026</td></tr></table>")
+    run_ticket.main(["T1", "--show-labels"], desk=FakeDesk(_raw(description=html)),
+                    state=InMemoryState())
+    out = capsys.readouterr().out
+    assert "-> used as new_starter_name" in out and "-> used as start_date" in out
+    assert "Lovelace" not in out
+
+
+def test_show_labels_cannot_combine_with_live():
+    with pytest.raises(SystemExit):
+        run_ticket.main(["T1", "--live", "--show-labels"], desk=FakeDesk(_raw()))
+
+
+def test_leaver_ticket_is_left_alone(forbid_side_effects, capsys):
+    desk = FakeDesk(_raw(subject="Natural Selection Offboarding User - Nadine Smith"))
+    assert run_ticket.main(["T1"], desk=desk, state=InMemoryState()) == 0
+    out = capsys.readouterr().out
+    assert "Type:      leaver" in out
+    assert "would post" not in out and "would set" not in out

@@ -2,6 +2,7 @@
 
     python tools/run_ticket.py "#101"          # preview: changes nothing anywhere
     python tools/run_ticket.py "#101" --live   # real run
+    python tools/run_ticket.py "#101" --show-labels   # list the form's labels, answers hidden
 
 The ticket can be given as its number shown in Desk ("#101" — quote it, '#' starts a comment
 in most shells) or as the long id from the ticket's browser address.
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 import sys
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -181,6 +183,70 @@ def print_summary(desk: Any, ticket_id: str) -> str | None:
     return ticket.ticket_type.value
 
 
+# --------------------------------------------------------------------------- labels
+
+# A "Label : Value" line in the form summary. Labels are short and never URLs.
+_LABEL_LINE = re.compile(r"^[ \t]*([^:\n]{2,100}?)[ \t]*:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+
+
+def found_labels(body: str) -> list[tuple[str, bool]]:
+    """(label, answered?) for every `Label : Value` line, in order. Values are not kept."""
+    from lib.zoho import _html_to_text
+
+    out: list[tuple[str, bool]] = []
+    seen: set[str] = set()
+    for m in _LABEL_LINE.finditer(_html_to_text(body)):
+        label = " ".join(m.group(1).split())
+        value = m.group(2)
+        if (label.lower().startswith(("http", "www")) or value.startswith("//")
+                or label.lower() in seen):
+            continue
+        seen.add(label.lower())
+        out.append((label, bool(value)))
+    return out
+
+
+def show_labels(desk: Any, ticket_id: str) -> int:
+    """Print the question labels on the ticket's form summary — never the answers."""
+    from lib.config import UnknownClientError, identify_client, resolve_config
+    from lib.zoho import DEFAULT_FIELD_LABELS, ZohoDeskClient
+
+    raw = desk.get_ticket_raw(ticket_id)
+    body = ZohoDeskClient._ticket_body(raw)
+    print(f"=== Ticket {ticket_id} ===")
+    print(f"Subject:   {raw.get('subject', '')}\n")
+
+    labels = dict(DEFAULT_FIELD_LABELS)
+    try:
+        from lib.zoho import _extract_company
+
+        stem = identify_client(_extract_company(body), body)
+        labels.update(resolve_config(stem).field_labels or {})
+        print(f"Client:    {stem} (its field_labels overrides applied)\n")
+    except UnknownClientError:
+        print("Client:    not identified (showing the default labels)\n")
+
+    by_label = {v.lower(): k for k, v in labels.items()}
+    found = found_labels(body)
+    if not found:
+        print("No 'Label : Value' lines found in this ticket's description.")
+        return 1
+
+    print("Labels on this ticket (answers hidden):")
+    for label, answered in found:
+        field = by_label.get(label.lower())
+        used = f"  -> used as {field}" if field else ""
+        print(f"  {'[answered]' if answered else '[empty]   '}  {label}{used}")
+
+    present = {label.lower() for label, _ in found}
+    missing = [(f, l) for f, l in labels.items() if l.lower() not in present]
+    if missing:
+        print("\nExpected but not found on this ticket:")
+        for field, label in missing:
+            print(f"  {field}: \"{label}\"")
+    return 0
+
+
 # --------------------------------------------------------------------------- main
 
 
@@ -201,7 +267,12 @@ def main(argv: list[str] | None = None, *, desk: Any = None, state: Any = None) 
     )
     parser.add_argument("--live", action="store_true",
                         help="really write to Desk and provision (default: preview only)")
+    parser.add_argument("--show-labels", action="store_true",
+                        help="only list the form's question labels (answers hidden); "
+                             "changes nothing")
     args = parser.parse_args(argv)
+    if args.live and args.show_labels:
+        parser.error("--show-labels can't be combined with --live")
 
     from dotenv import load_dotenv
 
@@ -225,6 +296,8 @@ def main(argv: list[str] | None = None, *, desk: Any = None, state: Any = None) 
 
     try:
         ticket_id = resolve_ticket_id(real_desk, args.ticket)
+        if args.show_labels:
+            return show_labels(real_desk, ticket_id)
         print("MODE: LIVE — changes will be made\n" if args.live
               else "MODE: PREVIEW — nothing will be changed\n")
         ticket_type = print_summary(real_desk, ticket_id)
