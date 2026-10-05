@@ -211,3 +211,77 @@ def test_outlook_forwarded_form_parses():
     assert ticket.starter.desired_username == "paulap"
     assert ticket.starter.job_title == "Digital Marketing Manager"   # multi-line cell joined
     assert ticket.starter.start_date == "29-Sep-2026"                # 2-column row, "Label:"
+
+
+# --------------------------------------------------------------------------- form in a later email
+
+
+class _Resp:
+    def __init__(self, data):
+        self._data, self.content = data, b"x"
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._data
+
+
+def _fake_desk_api(monkeypatch, description, threads):
+    """Fake Desk: GET ticket, GET threads (list), GET thread (content). Records calls."""
+    from lib import zoho
+
+    calls = []
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        path = url.split("/api/v1/")[1]
+        calls.append(path)
+        if path == "tickets/T9":
+            return _Resp({"id": "T9", "subject": "Fw: Natural Selection New Starter - Paula "
+                                                  "Potgieter - APPROVAL NEEDED",
+                          "description": description})
+        if path == "tickets/T9/threads":
+            # Deliberately not in date order: the client must sort oldest first.
+            return _Resp({"data": [{"id": t, "createdTime": when} for t, (when, _) in
+                                   sorted(threads.items(), key=lambda kv: kv[0], reverse=True)]})
+        thread_id = path.rsplit("/", 1)[1]
+        return _Resp({"content": threads[thread_id][1]})
+
+    client = ZohoDeskClient()
+    monkeypatch.setattr(client, "_headers", lambda: {})
+    monkeypatch.setattr(zoho.requests, "get", fake_get)
+    return client, calls
+
+
+def test_form_found_in_a_later_email(monkeypatch):
+    client, calls = _fake_desk_api(monkeypatch, "<p>Please see below and approve.</p>", {
+        "th1": ("2026-09-01T08:00:00.000Z", "<p>Hi, approval needed for Paula.</p>"),
+        "th2": ("2026-09-02T09:30:00.000Z", OUTLOOK_FORWARD),
+        "th3": ("2026-09-03T10:00:00.000Z", "Re: approved\n" + OUTLOOK_FORWARD),
+    })
+    raw = client.get_ticket_raw("T9")
+    assert raw["form_body"] == OUTLOOK_FORWARD                  # oldest email with the form
+    assert raw["form_source"] == "email 2 of 3 in the conversation (2026-09-02 09:30)"
+    assert "tickets/T9/threads/th3" not in calls               # stops at the first match
+
+    ticket = client.parse_ticket(raw)
+    assert ticket.ticket_type is TicketType.STARTER
+    assert (ticket.starter.first_name, ticket.starter.last_name) == ("Paula", "Potgieter")
+
+
+def test_form_in_first_message_reads_no_other_emails(monkeypatch):
+    client, calls = _fake_desk_api(monkeypatch, OUTLOOK_FORWARD, {
+        "th1": ("2026-09-01T08:00:00.000Z", "irrelevant"),
+    })
+    raw = client.get_ticket_raw("T9")
+    assert raw["form_source"] == "first message"
+    assert "form_body" not in raw
+    assert calls == ["tickets/T9"]
+
+
+def test_no_form_anywhere_leaves_description(monkeypatch):
+    client, _ = _fake_desk_api(monkeypatch, "<p>Phone 1307 goes to voicemail</p>", {
+        "th1": ("2026-09-01T08:00:00.000Z", "<p>Still broken</p>"),
+    })
+    raw = client.get_ticket_raw("T9")
+    assert "form_body" not in raw and "form_source" not in raw

@@ -136,10 +136,13 @@ class ZohoDeskClient:
         return str(matches[0]["id"])
 
     def get_ticket_raw(self, ticket_id: str) -> dict[str, Any]:
-        """Fetch the raw ticket JSON.
+        """Fetch the raw ticket JSON, plus the email that holds the form summary.
 
-        TODO: confirm whether the starter custom fields come back by default or need
-        `?include=` (Desk returns custom fields under the `cf` object).
+        The form isn't always the ticket's first message: a client may reply or forward it
+        later in the conversation (e.g. Natural Selection's approval chain). If the first
+        message (`description`) has no form summary, the ticket's other emails are checked
+        oldest first and the first one containing the form is attached as `form_body`
+        (with `form_source` saying where it came from).
         """
         def call() -> dict[str, Any]:
             resp = requests.get(
@@ -150,7 +153,60 @@ class ZohoDeskClient:
             resp.raise_for_status()
             return resp.json()
 
+        raw = with_retries(call)
+        if has_form_summary(str(raw.get("description") or "")):
+            raw["form_source"] = "first message"
+            return raw
+        found = self._form_from_threads(ticket_id)
+        if found:
+            raw["form_body"], raw["form_source"] = found
+        return raw
+
+    def _list_threads(self, ticket_id: str) -> list[dict[str, Any]]:
+        """All the ticket's email threads (summaries only), oldest first."""
+        threads: list[dict[str, Any]] = []
+        start = 1
+        while len(threads) < MAX_THREADS_SCANNED:
+            def call(start: int = start) -> list[dict[str, Any]]:
+                resp = requests.get(
+                    f"{self.base_url}/api/v1/tickets/{ticket_id}/threads",
+                    headers=self._headers(),
+                    params={"from": start, "limit": 50},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                return resp.json().get("data", []) if resp.content else []
+
+            page = with_retries(call)
+            threads += page
+            if len(page) < 50:
+                break
+            start += 50
+        return sorted(threads, key=lambda t: str(t.get("createdTime", "")))[:MAX_THREADS_SCANNED]
+
+    def _thread_content(self, ticket_id: str, thread_id: str) -> str:
+        def call() -> str:
+            resp = requests.get(
+                f"{self.base_url}/api/v1/tickets/{ticket_id}/threads/{thread_id}",
+                headers=self._headers(),
+                timeout=30,
+            )
+            resp.raise_for_status()
+            return str(resp.json().get("content") or "")
+
         return with_retries(call)
+
+    def _form_from_threads(self, ticket_id: str) -> tuple[str, str] | None:
+        """(content, where) of the oldest email in the ticket containing a form summary."""
+        threads = self._list_threads(ticket_id)
+        for n, thread in enumerate(threads, start=1):
+            if not thread.get("id"):
+                continue
+            content = self._thread_content(ticket_id, str(thread["id"]))
+            if has_form_summary(content):
+                when = str(thread.get("createdTime", ""))[:16].replace("T", " ")
+                return content, f"email {n} of {len(threads)} in the conversation ({when})"
+        return None
 
     def list_open_starter_leaver_ticket_ids(self) -> list[str]:
         """Ticket ids of currently-open starter/leaver tickets (for the reconciliation poll).
@@ -239,13 +295,9 @@ class ZohoDeskClient:
 
     @staticmethod
     def _ticket_body(raw: dict[str, Any]) -> str:
-        """The text we parse the form summary out of.
-
-        Desk's `description` holds the first message. TODO: confirm on a real ticket whether
-        the full summary is there or in the latest thread; if needed, fetch
-        GET /api/v1/tickets/{id}/latestThread and use its `content`.
-        """
-        return str(raw.get("description") or raw.get("content") or "")
+        """The text we parse the form summary out of: the email that holds the form (found
+        by get_ticket_raw), else the first message (`description`)."""
+        return str(raw.get("form_body") or raw.get("description") or raw.get("content") or "")
 
     # ------------------------------------------------------------------ writes
     def post_note(self, ticket_id: str, note: str) -> None:
@@ -428,6 +480,18 @@ def parse_summary(body: str, labels: dict[str, str | tuple[str, ...]]) -> dict[s
                 out[canon] = value
                 break
     return out
+
+
+# Upper bound on emails read per ticket when looking for the form.
+MAX_THREADS_SCANNED = 30
+
+
+def has_form_summary(body: str) -> bool:
+    """Does this email contain an onboarding form summary (by the default wordings)?"""
+    if not body:
+        return False
+    found = parse_summary(body, {f: DEFAULT_FIELD_LABELS[f] for f in FORM_SIGNAL_FIELDS})
+    return bool(found)
 
 
 def _extract_company(body: str) -> str | None:

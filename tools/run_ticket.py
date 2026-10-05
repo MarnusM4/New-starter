@@ -168,6 +168,7 @@ def print_summary(desk: Any, ticket_id: str) -> str | None:
     print(f"=== Ticket {ticket_id} ===")
     print(f"Subject:   {raw.get('subject', '')}")
     print(f"Desk status: {raw.get('status', '')}   approved: {is_approved(raw)}")
+    print(f"Form:      {raw.get('form_source') or 'not found in any email on the ticket'}")
     try:
         ticket = desk.parse_ticket(raw)
     except Exception as exc:  # noqa: BLE001 - shown, then the run reports the flag
@@ -239,7 +240,8 @@ def show_labels(desk: Any, ticket_id: str) -> int:
     raw = desk.get_ticket_raw(ticket_id)
     body = ZohoDeskClient._ticket_body(raw)
     print(f"=== Ticket {ticket_id} ===")
-    print(f"Subject:   {raw.get('subject', '')}\n")
+    print(f"Subject:   {raw.get('subject', '')}")
+    print(f"Form:      {raw.get('form_source') or 'not found in any email on the ticket'}\n")
 
     config = None
     try:
@@ -257,7 +259,8 @@ def show_labels(desk: Any, ticket_id: str) -> int:
 
     found = found_labels(body)
     if not found:
-        print("No 'Label : Value' lines found in this ticket's description.\n")
+        print("No 'Label : Value' lines found in the ticket's first message (and no other "
+              "email on the ticket contains the form).\n")
         print_masked_layout(body)
         return 1
 
