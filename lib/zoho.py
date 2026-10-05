@@ -136,10 +136,13 @@ class ZohoDeskClient:
         return str(matches[0]["id"])
 
     def get_ticket_raw(self, ticket_id: str) -> dict[str, Any]:
-        """Fetch the raw ticket JSON.
+        """Fetch the raw ticket JSON, plus the email that holds the form summary.
 
-        TODO: confirm whether the starter custom fields come back by default or need
-        `?include=` (Desk returns custom fields under the `cf` object).
+        The form isn't always the ticket's first message: a client may reply or forward it
+        later in the conversation (e.g. Natural Selection's approval chain). If the first
+        message (`description`) has no form summary, the ticket's other emails are checked
+        oldest first and the first one containing the form is attached as `form_body`
+        (with `form_source` saying where it came from).
         """
         def call() -> dict[str, Any]:
             resp = requests.get(
@@ -150,7 +153,60 @@ class ZohoDeskClient:
             resp.raise_for_status()
             return resp.json()
 
+        raw = with_retries(call)
+        if has_form_summary(str(raw.get("description") or "")):
+            raw["form_source"] = "first message"
+            return raw
+        found = self._form_from_threads(ticket_id)
+        if found:
+            raw["form_body"], raw["form_source"] = found
+        return raw
+
+    def _list_threads(self, ticket_id: str) -> list[dict[str, Any]]:
+        """All the ticket's email threads (summaries only), oldest first."""
+        threads: list[dict[str, Any]] = []
+        start = 1
+        while len(threads) < MAX_THREADS_SCANNED:
+            def call(start: int = start) -> list[dict[str, Any]]:
+                resp = requests.get(
+                    f"{self.base_url}/api/v1/tickets/{ticket_id}/threads",
+                    headers=self._headers(),
+                    params={"from": start, "limit": 50},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                return resp.json().get("data", []) if resp.content else []
+
+            page = with_retries(call)
+            threads += page
+            if len(page) < 50:
+                break
+            start += 50
+        return sorted(threads, key=lambda t: str(t.get("createdTime", "")))[:MAX_THREADS_SCANNED]
+
+    def _thread_content(self, ticket_id: str, thread_id: str) -> str:
+        def call() -> str:
+            resp = requests.get(
+                f"{self.base_url}/api/v1/tickets/{ticket_id}/threads/{thread_id}",
+                headers=self._headers(),
+                timeout=30,
+            )
+            resp.raise_for_status()
+            return str(resp.json().get("content") or "")
+
         return with_retries(call)
+
+    def _form_from_threads(self, ticket_id: str) -> tuple[str, str] | None:
+        """(content, where) of the oldest email in the ticket containing a form summary."""
+        threads = self._list_threads(ticket_id)
+        for n, thread in enumerate(threads, start=1):
+            if not thread.get("id"):
+                continue
+            content = self._thread_content(ticket_id, str(thread["id"]))
+            if has_form_summary(content):
+                when = str(thread.get("createdTime", ""))[:16].replace("T", " ")
+                return content, f"email {n} of {len(threads)} in the conversation ({when})"
+        return None
 
     def list_open_starter_leaver_ticket_ids(self) -> list[str]:
         """Ticket ids of currently-open starter/leaver tickets (for the reconciliation poll).
@@ -239,13 +295,9 @@ class ZohoDeskClient:
 
     @staticmethod
     def _ticket_body(raw: dict[str, Any]) -> str:
-        """The text we parse the form summary out of.
-
-        Desk's `description` holds the first message. TODO: confirm on a real ticket whether
-        the full summary is there or in the latest thread; if needed, fetch
-        GET /api/v1/tickets/{id}/latestThread and use its `content`.
-        """
-        return str(raw.get("description") or raw.get("content") or "")
+        """The text we parse the form summary out of: the email that holds the form (found
+        by get_ticket_raw), else the first message (`description`)."""
+        return str(raw.get("form_body") or raw.get("description") or raw.get("content") or "")
 
     # ------------------------------------------------------------------ writes
     def post_note(self, ticket_id: str, note: str) -> None:
@@ -348,20 +400,48 @@ def labels_for(config: ClientConfig | None = None) -> dict[str, tuple[str, ...]]
     return labels
 
 
+# Innermost table rows (no nested <tr> inside) and their cells.
+_INNER_ROW = re.compile(r"(?is)<tr\b[^>]*>((?:(?!<tr\b).)*?)</tr\s*>")
+_CELL = re.compile(r"(?is)<t[dh]\b[^>]*>(.*?)</t[dh]\s*>")
+
+
+def _cell_text(cell: str) -> str:
+    """A table cell's text on one line: tags dropped, entities decoded, spaces collapsed."""
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", cell)).split())
+
+
+def _row_to_line(match: re.Match) -> str:
+    """One table row -> one `Label : Value` line, however the cells are formatted.
+
+    Zoho's summary is a table of label / ":" / answer cells. Outlook forwards rebuild it
+    with every cell's text in its own <p>, so cell boundaries must not become line breaks.
+    """
+    cells = [_cell_text(c) for c in _CELL.findall(match.group(1))]
+    cells = [c for c in cells if c and c != ":"]
+    if not cells:
+        return "\n"
+    if len(cells) == 1:
+        return f"\n{cells[0]}\n"
+    label = cells[0].rstrip(":").strip()
+    value = " ".join(c.lstrip(":").strip() for c in cells[1:]).strip()
+    return f"\n{label} : {value}\n"
+
+
 def _html_to_text(s: str) -> str:
     """Best-effort HTML → text so a `Label : Value` block survives on one line per field.
 
-    Desk may store the email body as HTML. Turn row/line boundaries into newlines and cell
-    boundaries into a ' : ' separator, drop remaining tags, unescape entities, and collapse
-    any doubled separators. Plain-text bodies pass through unchanged.
+    Desk may store the email body as HTML — Zoho's own table, or Outlook's rebuilt copy when
+    a client forwards the form. Each innermost table row becomes one line (label, then the
+    answer); everything else — outer layout tables, paragraphs, line breaks — becomes line
+    breaks. Entities are decoded. Plain-text bodies pass through unchanged.
     """
     if "<" in s and ">" in s:
+        s = _INNER_ROW.sub(_row_to_line, s)
         s = re.sub(r"(?i)<br\s*/?>", "\n", s)
-        s = re.sub(r"(?i)</(tr|p|div|li|h[1-6])\s*>", "\n", s)
-        s = re.sub(r"(?i)</td>\s*<td[^>]*>", " : ", s)
+        s = re.sub(r"(?i)</(tr|td|th|p|div|li|h[1-6])\s*>", "\n", s)
         s = re.sub(r"<[^>]+>", "", s)
     s = html.unescape(s)
-    s = re.sub(r"[ \t]*:[ \t]*:[ \t]*", " : ", s)  # collapse a doubled colon from cell joins
+    s = re.sub(r"[ \t]*:[ \t]*:[ \t]*", " : ", s)  # collapse a doubled colon
     return s
 
 
@@ -400,6 +480,18 @@ def parse_summary(body: str, labels: dict[str, str | tuple[str, ...]]) -> dict[s
                 out[canon] = value
                 break
     return out
+
+
+# Upper bound on emails read per ticket when looking for the form.
+MAX_THREADS_SCANNED = 30
+
+
+def has_form_summary(body: str) -> bool:
+    """Does this email contain an onboarding form summary (by the default wordings)?"""
+    if not body:
+        return False
+    found = parse_summary(body, {f: DEFAULT_FIELD_LABELS[f] for f in FORM_SIGNAL_FIELDS})
+    return bool(found)
 
 
 def _extract_company(body: str) -> str | None:
