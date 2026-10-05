@@ -32,29 +32,44 @@ def normalize_username(raw: str) -> str:
     return raw.strip().lower().replace(" ", "")
 
 
-def split_person_name(value: str) -> tuple[str | None, str, str]:
-    """Split a Zoho "Name" field summary value into (prefix, first, last).
+_NAME_PREFIXES = {"mr", "mrs", "ms", "miss", "mx", "dr", "prof", "adv", "rev"}
 
-    Zoho Forms renders a Name field into the ${zf:ALL_FIELDS} summary as its subfields in
-    order, comma-separated — e.g. "Ms., Paula, Potgieter" (Prefix, First, Last) or
-    "Paula, Potgieter" (First, Last) when no prefix is set. We only need first/last
-    downstream; the prefix is returned for completeness.
+
+def _is_prefix(token: str) -> bool:
+    return token.strip().rstrip(".").lower() in _NAME_PREFIXES
+
+
+def split_person_name(value: str) -> tuple[str | None, str, str]:
+    """Split a name from the form summary into (prefix, first, last).
+
+    Two shapes occur:
+    - A Zoho "Name" field: subfields comma-separated in order, e.g. "Ms., Paula, Potgieter"
+      (Prefix, First, Last) or "Paula, Potgieter". Middle subfields are dropped.
+    - A free-text "Name & Surname" box: "Raymond Young" or "Marnus van den Heever". The first
+      word is the first name and **everything after it is the surname**, so multi-word
+      surnames (van den Heever, du Plessis) stay whole. A leading title (Mr, Ms, Dr, ...)
+      is split off.
 
     Untrusted input: this only splits/trims text — it never validates the username. The
-    resulting first/last still flow through validate_username at the trust boundary.
+    resulting first/last still flow through validate_username at the trust boundary, and
+    the planned username is shown to the approving technician before anything is created.
     """
     parts = [p.strip() for p in value.split(",") if p.strip()]
-    if len(parts) >= 3:
-        return parts[0], parts[1], parts[-1]
-    if len(parts) == 2:
-        return None, parts[0], parts[1]
-    if len(parts) == 1:
-        # A single token (e.g. "Paula Potgieter" with a space, or just a first name).
-        tokens = parts[0].split()
-        if len(tokens) >= 2:
-            return None, tokens[0], tokens[-1]
-        return None, parts[0], ""
-    return None, "", ""
+    prefix = None
+    if len(parts) >= 2:
+        if _is_prefix(parts[0]):
+            prefix, parts = parts[0], parts[1:]
+        if len(parts) >= 2:
+            return prefix, parts[0], parts[-1]
+    if not parts:
+        return prefix, "", ""
+
+    tokens = parts[0].split()
+    if len(tokens) >= 2 and _is_prefix(tokens[0]):
+        prefix, tokens = tokens[0], tokens[1:]
+    if len(tokens) >= 2:
+        return prefix, tokens[0], " ".join(tokens[1:])
+    return prefix, (tokens[0] if tokens else ""), ""
 
 
 def validate_username(name: str) -> str:

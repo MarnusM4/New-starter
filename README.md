@@ -94,9 +94,19 @@ field_labels:               # optional: override intake form labels for this cli
 For the `local_ad` path the file also carries `automation_account`, `hybrid_worker_group`,
 `subscription_id`, `resource_group`, `runbook_name`, and `ou_path`.
 
-`clients/_schema.py` defines the shape so a malformed client file fails fast. The optional
-`field_labels` map overrides [lib/zoho.py](lib/zoho.py) `DEFAULT_FIELD_LABELS` per client, for
-clients whose form uses different label wording; absent, the defaults apply.
+`clients/_schema.py` defines the shape so a malformed client file fails fast.
+
+**Form labels.** Each client's form words its questions differently ("New Starter's Name"
+vs "New Users Name & Surname"), so every agent field accepts several wordings
+([lib/zoho.py](lib/zoho.py) `DEFAULT_FIELD_LABELS`), matched ignoring case, apostrophes,
+"&"/"and" and a trailing "?". Most clients need nothing. For an unusual wording, add it to
+the client's optional `field_labels` (one label or a list; tried before the defaults) — or,
+if other clients are likely to use it too, add it to `DEFAULT_FIELD_LABELS`.
+
+**Names.** A Zoho Name field ("Ms., Paula, Potgieter") is split on commas; a free-text
+"Name & Surname" box takes the first word as the first name and **the rest as the surname**,
+so "Marnus van den Heever" → Marnus / van den Heever. A leading title (Mr, Ms, Dr, …) is
+dropped. The username comes from the new user's email address when the form gives one.
 
 ### Mapping a client to its config
 
@@ -407,7 +417,9 @@ and plan. Exit code 1 means a live run would flag it, and the output says why.
 To check a client's form labels, run `python tools/run_ticket.py "#<number>" --show-labels`
 on one of their real onboarding tickets. It lists every question label on the form, marks
 the ones the agent uses, and lists the ones it expected but didn't find — **answers are never
-shown**, so the output is safe to share. Missing ones go in that client's `field_labels`.
+shown**, so the output is safe to share. A question that isn't matched (no `-> used as`)
+but should be goes in that client's `field_labels`, or in `DEFAULT_FIELD_LABELS` if it's
+general wording.
 
 **8. Live, step by step.**
 1. `python tools/run_ticket.py "#<number>" --live` → the plan is posted as an internal

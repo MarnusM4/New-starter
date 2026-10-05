@@ -17,13 +17,13 @@ usage_location: GB
 upn_suffix: acme.com            # UPN/email domain; omit to use the tenant default
 username_format: "{first}.{last}"  # tokens: {first} {last} {first_initial} {last_initial}
 
-# Optional: override the intake form labels for THIS client, if their Zoho Form uses
-# different wording than the Flawless defaults (lib/zoho.DEFAULT_FIELD_LABELS). Only the
-# canonical fields you list here are overridden; the rest fall back to the defaults.
+# Optional, rarely needed: extra wordings for THIS client's form questions. Each field
+# already accepts several common wordings (lib/zoho.DEFAULT_FIELD_LABELS); labels listed here
+# are tried first. One label or a list. Check a form with:
+#   python tools/run_ticket.py "#<ticket>" --show-labels
 # field_labels:
-#   new_starter_name: "New Employee Full Name"
-#   job_title: "Position"
-#   start_date: "First Day"
+#   new_starter_name: "Full Name of New Employee"
+#   start_date: ["First Day", "First Working Day"]
 
 # Optional, normally NOT needed: this client's email domains are read automatically from its
 # Microsoft tenant (verified domains). Only list a domain here if it isn't verified there.

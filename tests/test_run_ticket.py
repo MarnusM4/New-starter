@@ -308,7 +308,7 @@ def test_show_labels_lists_labels_never_answers(forbid_side_effects, capsys):
     assert "[answered]  Job Title  -> used as job_title" in out
     assert "[empty]     Printer" in out
     assert "Your name" in out
-    assert "Expected but not found" in out and 'start_date: "Start Date"' in out
+    assert "Agent fields not found" in out and 'start_date: "Start Date"' in out
     # No answers and no URL lines leak into the output.
     for secret in ("Paula", "Potgieter", "Quinton", "Digital Marketing", "https"):
         assert secret not in out
@@ -336,3 +336,28 @@ def test_leaver_ticket_is_left_alone(forbid_side_effects, capsys):
     out = capsys.readouterr().out
     assert "Type:      leaver" in out
     assert "would post" not in out and "would set" not in out
+
+
+# The real Family Wealth form's labels (from --show-labels on ticket #70067); answers invented.
+FAMILY_WEALTH = """Company's Name : Family Wealth
+Requesters Name : Jane Doe
+Requesters Email address : jane@familywealth.example
+Is the new user replacing current Staff member : No
+New Users Name & Surname : Raymond Young
+New Users Email Address : raymond.young@familywealth.example
+New Users Phone Number : 0820000000
+Job Title : Financial Planner
+Department : Advice
+New Users Starting Date? : 01-Nov-2026
+Microsoft 365 License : Business Premium
+"""
+
+
+def test_show_labels_maps_family_wealth_wordings(forbid_side_effects, capsys):
+    run_ticket.main(["T1", "--show-labels"], desk=FakeDesk(_raw(description=FAMILY_WEALTH)),
+                    state=InMemoryState())
+    out = capsys.readouterr().out
+    assert "New Users Name & Surname  -> used as new_starter_name" in out
+    assert "New Users Email Address  -> used as ns_email" in out
+    assert "New Users Starting Date?  -> used as start_date" in out
+    assert "Raymond" not in out and "Young" not in out

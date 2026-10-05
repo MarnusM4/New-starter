@@ -185,23 +185,21 @@ def print_summary(desk: Any, ticket_id: str) -> str | None:
 
 # --------------------------------------------------------------------------- labels
 
-# A "Label : Value" line in the form summary. Labels are short and never URLs.
-_LABEL_LINE = re.compile(r"^[ \t]*([^:\n]{2,100}?)[ \t]*:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
-
 
 def found_labels(body: str) -> list[tuple[str, bool]]:
-    """(label, answered?) for every `Label : Value` line, in order. Values are not kept."""
-    from lib.zoho import _html_to_text
+    """(label, answered?) for every `Label : Value` line, in order. Values are not kept.
+
+    Uses the agent's own parser (lib.zoho.summary_pairs), so what's listed here is exactly
+    what the agent sees.
+    """
+    from lib.zoho import norm_label, summary_pairs
 
     out: list[tuple[str, bool]] = []
     seen: set[str] = set()
-    for m in _LABEL_LINE.finditer(_html_to_text(body)):
-        label = " ".join(m.group(1).split())
-        value = m.group(2)
-        if (label.lower().startswith(("http", "www")) or value.startswith("//")
-                or label.lower() in seen):
+    for label, value in summary_pairs(body):
+        if norm_label(label) in seen:
             continue
-        seen.add(label.lower())
+        seen.add(norm_label(label))
         out.append((label, bool(value)))
     return out
 
@@ -209,41 +207,46 @@ def found_labels(body: str) -> list[tuple[str, bool]]:
 def show_labels(desk: Any, ticket_id: str) -> int:
     """Print the question labels on the ticket's form summary — never the answers."""
     from lib.config import UnknownClientError, identify_client, resolve_config
-    from lib.zoho import DEFAULT_FIELD_LABELS, ZohoDeskClient
+    from lib.zoho import ZohoDeskClient, _extract_company, labels_for, norm_label
 
     raw = desk.get_ticket_raw(ticket_id)
     body = ZohoDeskClient._ticket_body(raw)
     print(f"=== Ticket {ticket_id} ===")
     print(f"Subject:   {raw.get('subject', '')}\n")
 
-    labels = dict(DEFAULT_FIELD_LABELS)
+    config = None
     try:
-        from lib.zoho import _extract_company
-
         stem = identify_client(_extract_company(body), body)
-        labels.update(resolve_config(stem).field_labels or {})
-        print(f"Client:    {stem} (its field_labels overrides applied)\n")
+        config = resolve_config(stem)
+        print(f"Client:    {stem} (its field_labels applied)\n")
     except UnknownClientError:
         print("Client:    not identified (showing the default labels)\n")
 
-    by_label = {v.lower(): k for k, v in labels.items()}
+    labels = labels_for(config)
+    field_for = {}
+    for field, accepted in labels.items():
+        for label in accepted:
+            field_for.setdefault(norm_label(label), field)
+
     found = found_labels(body)
     if not found:
         print("No 'Label : Value' lines found in this ticket's description.")
         return 1
 
     print("Labels on this ticket (answers hidden):")
+    used_fields = set()
     for label, answered in found:
-        field = by_label.get(label.lower())
+        field = field_for.get(norm_label(label))
+        if field:
+            used_fields.add(field)
         used = f"  -> used as {field}" if field else ""
         print(f"  {'[answered]' if answered else '[empty]   '}  {label}{used}")
 
-    present = {label.lower() for label, _ in found}
-    missing = [(f, l) for f, l in labels.items() if l.lower() not in present]
+    missing = [field for field in labels if field not in used_fields]
     if missing:
-        print("\nExpected but not found on this ticket:")
-        for field, label in missing:
-            print(f"  {field}: \"{label}\"")
+        print("\nAgent fields not found on this ticket (accepted wordings):")
+        for field in missing:
+            print(f"  {field}: " + " / ".join(f'"{label}"' for label in labels[field]))
     return 0
 
 
